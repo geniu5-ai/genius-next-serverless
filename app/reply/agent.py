@@ -32,6 +32,7 @@ from pydantic_ai import Agent, PromptedOutput, RunContext
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 
 from app.contracts import FATO_TIPOS, AgentStatusSignal, FatoConversa
+from app.reply.guardrails import guardrail_de_saida
 from deepeval.tracing import observe as _deepeval_observe
 from deepeval.tracing.context import update_current_trace as _update_trace
 
@@ -181,6 +182,12 @@ class ReplyDeps:
     phone: str = ""
     # Chamadas a rota densa neste turno; teto MANAGER_REASONING_MAX_PER_TURN.
     raciocinios: list[str] = field(default_factory=list)
+    # Guardrail de valores (app/reply/guardrails.py): liga so quando a entrada
+    # e a fonte completa (catalogo inline, sem busca na web nem raciocinio), a
+    # mesma condicao do vigia.  ``fontes_de_valor`` sao os textos da entrada
+    # onde um valor em reais pode legitimamente aparecer.
+    vigiar_valores: bool = False
+    fontes_de_valor: tuple[str, ...] = ()
 
 
 # ``defer_model_check`` evita tocar em settings no import: o modelo real chega
@@ -220,6 +227,10 @@ reply_agent = Agent(
     # dentro do orcamento do turno.
     retries=2,
     defer_model_check=True,
+    # Guardrail de saida (02/nov/2026, substitui o sidecar llm-guard): segredo
+    # reescrito e valor em reais fora da entrada refeito uma vez, depois
+    # bloqueado.  Detalhe em app/reply/guardrails.py.
+    capabilities=[guardrail_de_saida()],
     # O deepseek-v4-flash *pensa* antes de responder, e o pensamento e a maior
     # fatia da espera do cliente.  Medido em 26/ago/2026, 8 perguntas x 2
     # rodadas com o prompt e o catalogo reais deste tenant:
@@ -396,26 +407,44 @@ def draft_reply_with_agent(
     # Etapa fica como telemetria via logger acima.
     com_status = settings.status_agent_enabled(turn.tenant_id)
     com_fatos = settings.fatos_enabled(turn.tenant_id)
-    resposta = _run_agent(
-        com_status=com_status,
-        com_fatos=com_fatos,
-        phone=phone,
-        tenant_id=turn.tenant_id,
-        business_prompt=business,
-        contract_rules=tuple(_STRUCTURAL_RULES),
-        catalog=catalogo,
-        catalogo_inline=inline,
-        context=context,
-        model=settings.REPLY_AGENT_MODEL,
-        output_max_tokens=settings.OUTPUT_MAX_TOKENS,
-        web_search=web_search,
-        manager=manager_enabled(turn.tenant_id),
-        historico=tuple(
-            (str(item.get("role", "")), str(item.get("text", "")))
-            for item in context.get("history") or []
-            if isinstance(item, dict)
-        ),
-    )
+    from pydantic_ai_harness.guardrails import OutputBlocked
+
+    try:
+        resposta = _run_agent(
+            com_status=com_status,
+            com_fatos=com_fatos,
+            phone=phone,
+            tenant_id=turn.tenant_id,
+            business_prompt=business,
+            contract_rules=tuple(_STRUCTURAL_RULES),
+            catalog=catalogo,
+            catalogo_inline=inline,
+            context=context,
+            model=settings.REPLY_AGENT_MODEL,
+            output_max_tokens=settings.OUTPUT_MAX_TOKENS,
+            web_search=web_search,
+            manager=manager_enabled(turn.tenant_id),
+            historico=tuple(
+                (str(item.get("role", "")), str(item.get("text", "")))
+                for item in context.get("history") or []
+                if isinstance(item, dict)
+            ),
+            fontes_de_valor=_fontes_de_valor(business, inline, context),
+        )
+    except OutputBlocked:
+        # Guardrail de saida: o modelo insistiu em valor fora da entrada mesmo
+        # depois de refazer.  Mesmo destino do vigia: handoff sem preco.
+        from app.contracts import ReplyDraft
+        from app.reply.price_guard import VALOR_NAO_CONFIRMADO_TEXT
+
+        return (
+            ReplyDraft(
+                action="handoff",
+                text=VALOR_NAO_CONFIRMADO_TEXT,
+                llm_model=settings.REPLY_AGENT_MODEL,
+            ),
+            "open",
+        )
     barrado = _vigia_de_valores(
         resposta,
         tenant_id=turn.tenant_id,
@@ -464,6 +493,31 @@ def _fatos_do_agente(resposta: AgentReply) -> list[FatoConversa]:
     return [f for f in fatos if f is not None]
 
 
+def _entrada_e_fonte_completa(
+    inline: tuple[tuple[str, str, str], ...], *, web_search: bool, manager: bool
+) -> bool:
+    """A entrada do modelo e a fonte completa de valores: catalogo inline e
+    nenhuma ferramenta que traga texto novo (busca na web, raciocinio).
+
+    Condicao unica do vigia e do guardrail de valores, para os dois nunca
+    divergirem sobre quando opinar.
+    """
+    return bool(inline) and not web_search and not manager
+
+
+def _fontes_de_valor(
+    business: str,
+    inline: tuple[tuple[str, str, str], ...],
+    context: dict[str, Any],
+) -> tuple[str, ...]:
+    """Textos da entrada onde um valor em reais pode aparecer legitimamente."""
+    return (
+        business,
+        *(f"{titulo} {conteudo}" for _chave, titulo, conteudo in inline),
+        json.dumps(context, ensure_ascii=False),
+    )
+
+
 def _vigia_de_valores(
     resposta: AgentReply,
     *,
@@ -481,7 +535,9 @@ def _vigia_de_valores(
     Só vale com catálogo inline e sem ferramenta que traga texto novo (busca na
     web, raciocínio proativo): fora disso a entrada não é a fonte completa.
     """
-    if not inline or web_search or manager or resposta.action != "send_text":
+    if resposta.action != "send_text" or not _entrada_e_fonte_completa(
+        inline, web_search=web_search, manager=manager
+    ):
         return None
     from app.contracts import ReplyDraft
     from app.reply.price_guard import (
@@ -490,12 +546,9 @@ def _vigia_de_valores(
     )
     from app.settings import get_settings
 
-    fontes = [
-        business,
-        *(f"{titulo} {conteudo}" for _chave, titulo, conteudo in inline),
-        json.dumps(context, ensure_ascii=False),
-    ]
-    fora = valores_fora_da_entrada(resposta.text, fontes)
+    fora = valores_fora_da_entrada(
+        resposta.text, _fontes_de_valor(business, inline, context)
+    )
     if not fora:
         return None
     logger.warning(
@@ -526,8 +579,14 @@ def _run_agent(
     com_status: bool = False,
     com_fatos: bool = False,
     phone: str = "",
+    fontes_de_valor: tuple[str, ...] = (),
 ) -> AgentReply:
-    """Uma execução do agente, com a retentativa de :func:`_run_com_retentativa`."""
+    """Uma execução do agente, com a retentativa de :func:`_run_com_retentativa`.
+
+    Levanta ``OutputBlocked`` quando o guardrail de saida bloqueia a resposta
+    (valor em reais fora da entrada depois da refacao): quem chama decide o
+    fallback.
+    """
     deps = ReplyDeps(
         tenant_id=tenant_id,
         business_prompt=business_prompt,
@@ -538,6 +597,10 @@ def _run_agent(
         manager=manager,
         historico=historico,
         phone=phone,
+        vigiar_valores=_entrada_e_fonte_completa(
+            catalogo_inline, web_search=web_search, manager=manager
+        ),
+        fontes_de_valor=fontes_de_valor,
     )
     model_settings = dict(reply_agent.model_settings or {})
     model_settings["max_tokens"] = output_max_tokens

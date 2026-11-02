@@ -1,27 +1,22 @@
-"""Security adapter: deterministic local guard + HTTP contract for a guard sidecar.
+"""Security guard: deterministic local checks, no network and no sidecar.
 
-Scope note
-----------
-The main Genius-Next runtime is Python 3.14.  The heavy content guard (``llm_guard``)
-needs a Python 3.12 sidecar, so this module is deliberately a **contract/adaptor**:
-* ``scan_invisible_text`` — a deterministic, dependency-free local check (Unicode
-  invisible control characters) that always works on the current runtime.
-* ``GuardClient.assess`` — a thin HTTP client that calls ``POST <base>/v1/scan`` and
-  validates the sidecar's JSON reply, degrading to ``unavailable`` without raising.
+* ``scan_invisible_text`` — Unicode invisible control characters (both stages).
+* ``contains_secret`` — credential patterns from ``pydantic_ai_harness`` detectors.
+* ``assess_locally`` — one stage assessment built from the two checks above.
 
 No credentials, tokens or request payloads are ever logged or echoed into findings.
+The output guardrail of the reply agent itself lives in ``app/reply/guardrails.py``.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import unicodedata
 from collections.abc import Sequence
 from enum import Enum
+from functools import lru_cache
 from typing import Literal
 
-import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
@@ -196,120 +191,70 @@ def scan_invisible_text(text: str, *, event_refs: Sequence[str] = ()) -> GuardAs
 
 
 # --------------------------------------------------------------------------- #
-# HTTP adaptor for the guard sidecar
+# Avaliacao local (substitui o sidecar llm-guard, 02/nov/2026)
 # --------------------------------------------------------------------------- #
-class GuardClient:
-    """Small client for the guard sidecar's ``POST /v1/scan`` endpoint.
+# O sidecar llm-guard (Python 3.12, modelo de ML na porta 8722) saiu: na entrada
+# o achado de prompt injection ja era so consultivo desde 08/out/2026 (marcava
+# fala normal de paciente) e, na saida, ele so procurava segredos. Sem o
+# sidecar, a guarda de saida falhava FECHADO por indisponibilidade e trocava
+# toda resposta pelo handoff seguro (medido no Render em 02/nov/2026).
+#
+# Agora tudo e local, deterministico e sem rede, entao nunca fica
+# "unavailable": texto invisivel nos dois estagios e, na saida, os padroes de
+# credencial do pydantic-ai-harness (chaves OpenAI/Anthropic/AWS/Stripe/Google,
+# tokens GitHub/Slack, JWT, chave privada).  O valor ``unavailable`` continua
+# no contrato porque linhas antigas de security_events o carregam.
+_SECRET_SCANNER = "pydantic_ai_harness.secret_data"
 
-    The client never touches ``llm_guard`` and never logs request payloads, the
-    base URL, or any token/credential.  On timeouts, HTTP/transport errors, or an
-    invalid response schema it returns an ``unavailable`` assessment instead of
-    raising, so callers can fail safe.
 
-    If the deterministic ``scan_invisible_text`` already blocks one of the texts,
-    :meth:`assess` short-circuits to that block without any network call.
+@lru_cache(maxsize=1)
+def _secret_detector():
+    from pydantic_ai_harness.guardrails import detectors
+
+    return detectors.secret_data()
+
+
+def contains_secret(text: str) -> bool:
+    """True quando o texto tem algo com cara de credencial (chave, token, JWT)."""
+    if not text:
+        return False
+    return _secret_detector()(text).action == "replace"
+
+
+def assess_locally(
+    stage: GuardStage | str,
+    texts: Sequence[str],
+    *,
+    event_refs: Sequence[str] = (),
+) -> GuardAssessment:
+    """Avalia um estagio sem rede: invisivel nos dois, segredo so na saida.
+
+    Os achados levam so codigo opaco, nunca trecho do texto avaliado.
     """
-
-    def __init__(
-        self,
-        base_url: str,
-        timeout_seconds: float,
-        client: httpx.Client | None = None,
-    ) -> None:
-        self._base_url = base_url.rstrip("/")
-        self._timeout_seconds = timeout_seconds
-        self._client = client or httpx.Client(timeout=timeout_seconds)
-        self._owns_client = client is None
-
-    def close(self) -> None:
-        if self._owns_client:
-            self._client.close()
-
-    def assess(
-        self,
-        stage: GuardStage,
-        texts: Sequence[str],
-        *,
-        event_refs: Sequence[str] = (),
-    ) -> GuardAssessment:
-        stage_value = GuardStage(stage)
-        refs = tuple(event_refs)
-
-        # Fast, deterministic local path: if anything is already blocked on the
-        # invisible-text check, do not spend an HTTP round trip — block locally.
-        # A local block still reports the requested stage: callers must hear back
-        # about the stage they asked to assess, never a silently shifted input one.
-        for text in texts:
-            local = scan_invisible_text(text, event_refs=refs)
-            if local.disposition == GuardDisposition.BLOCK:
-                return local.model_copy(update={"stage": stage_value.value})
-
-        return self._call_sidecar(stage_value, list(texts), refs)
-
-    def _call_sidecar(
-        self, stage: GuardStage, texts: list[str], refs: tuple[str, ...]
-    ) -> GuardAssessment:
-        try:
-            resp = self._client.post(
-                f"{self._base_url}/v1/scan",
-                json={"stage": stage.value, "texts": texts, "event_refs": list(refs)},
-            )
-            resp.raise_for_status()
-            payload = json.loads(resp.text)
-            return self._validate_response(stage, payload, refs)
-        except (httpx.HTTPError, ValueError, KeyError, TypeError):
-            # Timeout, transport/HTTP error, malformed JSON or an unexpected schema
-            # shape: fail safe as unavailable.  Log a safe, opaque message only —
-            # never exc_info, which can carry the URL, error text or response body.
-            logger.warning("guard sidecar unavailable")
-            return GuardAssessment(
-                stage=stage.value,
-                disposition=GuardDisposition.UNAVAILABLE.value,
-                findings=[
-                    GuardFinding(
-                        scanner="security_guard.client",
-                        reason_code="guard_unavailable",
-                        score=0.0,
-                    )
-                ],
-                event_refs=refs,
-                deterministic=False,
-            )
-
-    def _validate_response(
-        self, stage: GuardStage, payload: object, refs: tuple[str, ...]
-    ) -> GuardAssessment:
-        if not isinstance(payload, dict):
-            raise ValueError("guard response must be a JSON object")
-
-        seen_stage = payload.get("stage")
-        disposition = payload.get("disposition")
-        raw_findings = payload.get("findings")
-        seen_refs = payload.get("event_refs")
-
-        # Strictness: every required field must be present; unknown disposition and
-        # findings that are not a list also fail validation.  A reply for a
-        # different stage than the one requested is a crossed/stale response and
-        # must never be accepted.
-        if seen_stage not in (GuardStage.INPUT, GuardStage.OUTPUT):
-            raise ValueError("guard response stage is invalid")
-        if GuardStage(seen_stage) is not stage:
-            raise ValueError("guard response stage does not match the request")
-        if disposition not in (
-            GuardDisposition.ALLOW,
-            GuardDisposition.BLOCK,
-            GuardDisposition.UNAVAILABLE,
-        ):
-            raise ValueError("guard response disposition is invalid")
-        if not isinstance(raw_findings, list):
-            raise ValueError("guard response findings missing")
-        if not isinstance(seen_refs, list):
-            raise ValueError("guard response event_refs missing")
-
+    stage_value = GuardStage(stage)
+    refs = tuple(event_refs)
+    for text in texts:
+        local = scan_invisible_text(text, event_refs=refs)
+        if local.disposition == GuardDisposition.BLOCK:
+            return local.model_copy(update={"stage": stage_value.value})
+    if stage_value is GuardStage.OUTPUT and any(contains_secret(t) for t in texts):
         return GuardAssessment(
-            stage=GuardStage(seen_stage).value,
-            disposition=GuardDisposition(disposition).value,
-            findings=[GuardFinding.model_validate(f) for f in raw_findings],
-            event_refs=tuple(str(r) for r in seen_refs),
-            deterministic=False,
+            stage=stage_value.value,
+            disposition=GuardDisposition.BLOCK.value,
+            findings=[
+                GuardFinding(
+                    scanner=_SECRET_SCANNER,
+                    reason_code="secret_in_output",
+                    score=1.0,
+                )
+            ],
+            event_refs=refs,
+            deterministic=True,
         )
+    return GuardAssessment(
+        stage=stage_value.value,
+        disposition=GuardDisposition.ALLOW.value,
+        findings=[],
+        event_refs=refs,
+        deterministic=True,
+    )

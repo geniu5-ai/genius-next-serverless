@@ -78,7 +78,7 @@ from app.reply.handoff_promotion import promote_forwarding_to_handoff
 from app.reply.safety_routes import EMERGENCY_DRAFT, safety_handoff_draft
 from app.reply.split import split_human_reply
 from app.status.rules import is_deferral_or_closing
-from app.security.guard import GuardAssessment, GuardClient, GuardDisposition, GuardStage
+from app.security.guard import GuardAssessment, GuardDisposition, GuardStage, assess_locally
 from app.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -292,7 +292,12 @@ def guard_assess_step(
     texts: list[str],
     event_refs: tuple[str, ...],
 ) -> GuardAssessment:
-    """Checkpoint one guard sidecar call so workflow replays reuse the verdict."""
+    """Avalia um estagio com as checagens locais (texto invisivel; segredo na saida).
+
+    Sem rede desde 02/nov/2026 (o sidecar llm-guard saiu), entao o resultado
+    nunca e ``unavailable`` e a guarda de saida nao derruba mais resposta boa
+    por indisponibilidade.
+    """
     if not texts:
         return GuardAssessment(
             stage=stage,
@@ -306,8 +311,7 @@ def guard_assess_step(
         stage == GuardStage.OUTPUT.value and not settings.OUTPUT_GUARD_ENABLED
     )
     if desligado:
-        # Desligado por configuracao: nao chama o sidecar e libera.  deterministic
-        # e True porque a decisao foi local, nao veio do modelo do guard.
+        # Desligado por configuracao: libera sem checar.
         return GuardAssessment(
             stage=stage,
             disposition=GuardDisposition.ALLOW.value,
@@ -315,14 +319,7 @@ def guard_assess_step(
             event_refs=event_refs,
             deterministic=True,
         )
-    client = GuardClient(
-        base_url=settings.GUARD_SIDECAR_URL,
-        timeout_seconds=settings.GUARD_TIMEOUT_SECONDS,
-    )
-    try:
-        return client.assess(stage, texts, event_refs=event_refs)
-    finally:
-        client.close()
+    return assess_locally(stage, texts, event_refs=event_refs)
 
 
 def turn_has_audio(turn: ClaimedTurn) -> bool:
