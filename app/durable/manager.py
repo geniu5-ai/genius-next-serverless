@@ -388,7 +388,7 @@ def _dispatch(commands: list[OutboxCommand]) -> bool:
 
 
 def _saida_passa_na_guarda(texto: str) -> bool:
-    """Mesma guarda de saida do turno (sidecar), nunca um caminho paralelo."""
+    """Mesma guarda de saida do turno (checagens locais), nunca um caminho paralelo."""
     from app.durable.flow import guard_assess_step
     from app.security.guard import GuardDisposition
 

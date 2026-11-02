@@ -230,15 +230,13 @@ class Settings(BaseSettings):
     # 200 messages before the summary is generated.  Configurable, never a
     # hardcoded literal buried in the flow.
     HISTORY_SUMMARY_MAX_PAGES: int = Field(default=10, ge=1, le=50)
-    GUARD_SIDECAR_URL: str = "http://127.0.0.1:8722"
-    # Guard de SAIDA desligavel: o de entrada continua valendo.  Ordem do
-    # chairman 25/ago/2026 — desligar por ora enquanto o basico e afinado.
-    # Desliga o guard inteiro (entrada e saida) sem apagar codigo: com False o
-    # passo nem chama o sidecar e libera o texto. OUTPUT_GUARD_ENABLED continua
-    # existindo para desligar so a saida.
+    # Guarda local (app/security/guard.py, sem sidecar desde 02/nov/2026):
+    # texto invisivel nos dois estagios e segredo na saida.  GUARD_ENABLED
+    # desliga as duas sem apagar codigo; OUTPUT_GUARD_ENABLED desliga so a
+    # saida.  GUARD_SIDECAR_URL e GUARD_TIMEOUT_SECONDS sairam: no env sao
+    # ignoradas (extra="ignore").
     GUARD_ENABLED: bool = True
     OUTPUT_GUARD_ENABLED: bool = True
-    GUARD_TIMEOUT_SECONDS: float = Field(default=1.5, gt=0.1, le=2.0)
     REPLY_INPUT_MAX_CHARS: int = Field(default=12_000, ge=1, le=24_000)
     REPLY_RESPONSE_MAX_BYTES: int = Field(default=65_536, ge=1, le=262_144)
     # The router is allowed one bounded retry/failover window. Eight seconds

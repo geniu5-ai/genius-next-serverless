@@ -31,7 +31,6 @@ from app.ingress.evolution import HistoryResult
 from app.identity_primitives import normalize_phone
 from app.reply.prompt_profiles import PromptPurpose, active_prompt_for
 from app.security.guard import (
-    GuardClient,
     GuardDisposition,
     scan_invisible_text,
 )
@@ -501,7 +500,6 @@ def _knowledge_tool_result(
     tenant_id: str,
     allowed_keys: set[str],
     chave: str | None,
-    guard: GuardClient | None = None,
 ) -> str:
     """Read one catalog document and screen it for smuggled instructions.
 
@@ -522,8 +520,7 @@ def _knowledge_tool_result(
 
     The net is still in place: the OUTPUT guard in the workflow scans the final
     reply before delivery, so a harmful document cannot reach a customer through
-    this path anyway. ``guard`` is kept only for call/test compatibility and is
-    intentionally unused.
+    this path anyway.
     """
     if chave is None or chave not in allowed_keys:
         return _KNOWLEDGE_NOT_FOUND
@@ -891,33 +888,25 @@ def draft_reply(
                 ],
             }
             tool_messages: list[dict[str, str]] = []
-            guard = GuardClient(
-                base_url=resolved_settings.GUARD_SIDECAR_URL,
-                timeout_seconds=resolved_settings.GUARD_TIMEOUT_SECONDS,
-            )
-            try:
-                for index, tool_call in enumerate(choice.message.tool_calls):
-                    if index >= MAX_TOOL_CALLS:
-                        content = _KNOWLEDGE_LIMIT_REACHED
-                    elif tool_call.function.name != _OPEN_KNOWLEDGE_TOOL:
-                        content = _KNOWLEDGE_NOT_FOUND
-                    else:
-                        content = _knowledge_tool_result(
-                            session,
-                            tenant_id=turn.tenant_id,
-                            allowed_keys=allowed_keys,
-                            chave=_parse_tool_arguments(tool_call.function.arguments),
-                            guard=guard,
-                        )
-                    tool_messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": content,
-                        }
+            for index, tool_call in enumerate(choice.message.tool_calls):
+                if index >= MAX_TOOL_CALLS:
+                    content = _KNOWLEDGE_LIMIT_REACHED
+                elif tool_call.function.name != _OPEN_KNOWLEDGE_TOOL:
+                    content = _KNOWLEDGE_NOT_FOUND
+                else:
+                    content = _knowledge_tool_result(
+                        session,
+                        tenant_id=turn.tenant_id,
+                        allowed_keys=allowed_keys,
+                        chave=_parse_tool_arguments(tool_call.function.arguments),
                     )
-            finally:
-                guard.close()
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": content,
+                    }
+                )
 
             provider, choice = _request_choice(
                 {
