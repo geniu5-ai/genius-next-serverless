@@ -1,0 +1,56 @@
+name: Monitor de saúde
+
+# Verifica /health de produção (Render) a cada 5 minutos. Falhou: o job fica vermelho
+# (o GitHub avisa por e-mail) e abre/atualiza uma issue "monitor" — sem duplicar. Voltou: fecha.
+# A crew lê essas issues (github_monitor.py no Genius-Dev) e abre task p0 para o senior.
+#
+# Clonado do monitor do Genius-App; as diferenças vêm do plano free do Render, que dorme após
+# ~15 min sem tráfego e leva até ~60 s para acordar (docs/OPERACAO.md). Por isso o timeout por
+# tentativa é longo e há uma espera entre elas: uma cold start não pode virar incidente.
+# O critério de saúde é o mesmo do watchdog do Next: HTTP 200 e "ok" no corpo.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      HEALTH_URL: https://genius-next-serverless.onrender.com/health
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Consulta com 3 tentativas (tolera cold start)
+        id: check
+        run: |
+          set +e
+          ok=false
+          for i in 1 2 3; do
+            code=$(curl -s -o body.json -w '%{http_code}' --max-time 90 "$HEALTH_URL")
+            if [ "$code" = "200" ] && grep -q '"ok"' body.json; then ok=true; break; fi
+            sleep 20
+          done
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          [ "$ok" = "true" ]
+      - name: Abre ou atualiza a issue de incidente
+        if: failure()
+        run: |
+          body="Serverless (Render) respondeu HTTP ${{ steps.check.outputs.code }} em $(date -u +%FT%TZ). Resposta: $(head -c 400 body.json 2>/dev/null). Execução: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          n=$(gh issue list --label monitor --state open --json number -q '.[0].number')
+          if [ -z "$n" ]; then
+            gh label create monitor --color B60205 2>/dev/null || true
+            gh issue create --title "Serverless fora do ar ou degradado" --label monitor --body "$body"
+          else
+            gh issue comment "$n" --body "$body"
+          fi
+      - name: Fecha a issue quando voltar
+        if: success()
+        run: |
+          for n in $(gh issue list --label monitor --state open --json number -q '.[].number'); do
+            gh issue close "$n" --comment "Serverless voltou a responder 200 com ok ($(date -u +%FT%TZ))."
+          done
