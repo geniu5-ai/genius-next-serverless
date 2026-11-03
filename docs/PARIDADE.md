@@ -32,7 +32,7 @@ documentos (README, HANDOFF, OPERACAO) apontam para cá em vez de repetir.
 | **Catálogo** (`knowledge`, campanhas, preços) | Postgres do Next | idem prompts |
 | **Regras de negócio** (leis do cliente, parada de follow-up por objeção e despedida, teto por contato, status) | código, não prompt | são código de `app/`: seguem o PR espelho |
 | **Docs** de regra, doutrina e armadilhas **genéricas** | cada repositório tem os seus `docs/HANDOFF.md` e `docs/TRAPS.md` (numerações próprias, não são cópia um do outro) | entra no Standby como nota genérica depois de revisar dado de cliente. Hoje o único doc idêntico é **este** |
-| **Migrations de banco** | `migrations/` | `migrations/090_procrastinate.sql` é idêntica. O restante do esquema `genius_next` do Neon veio de dump e já divergiu uma vez (`TRAPS` #2 do Standby): conferir o esquema antes de promover |
+| **Migrations de banco** | `migrations/` | `migrations/091_campaigns.sql` (tabela `campaigns`, do módulo de campanhas) vai **nos dois bancos**, cada um por seu caminho (Next: à mão na 002; Standby: pelo Neon). `migrations/090_procrastinate.sql` é idêntica. O restante do esquema `genius_next` do Neon veio de dump e já divergiu uma vez (`TRAPS` #2 do Standby): conferir o esquema antes de promover |
 
 ## O que é separado (infraestrutura)
 
@@ -98,6 +98,8 @@ lições (busca e extração), embeddings, o juiz de qualidade e os demais módu
 |---|---|---|---|
 | 03/nov/2026 | Follow-up: objeção (distância, custo, tempo) e despedida pausam o ciclo; teto de mensagens por contato (3 em 24 h, 5 em 7 dias, `FOLLOWUP_MAX_PER_PHONE_7D`); sem escassez obrigatória na tentativa 2; `data_atual` no contexto. Arquivos: `app/status/rules.py`, `app/durable/followup.py`, `app/durable/flow.py`, `app/reply/llm.py`, `app/settings.py` | `Genius-Next#74` | testes em `tests/test_followup_objecao.py` (106) + helpers; sem Postgres, 8 testes de `test_followup_guard.py` falham por senha do banco de teste, os mesmos que falham no Next |
 | 03/nov/2026 | Manager: a rota densa tenta uma vez o modelo do turno quando o de raciocínio falha (`app/reply/tools/reasoning.py`); ao devolver a conversa da equipe ao bot, aborda na hora quem ficou sem resposta (`app/durable/pendentes.py`, `app/durable/manager_tick.py`, só tenants de `MANAGER_PENDENTES_TENANTS`) | `Genius-Next#74` | testes de `test_pendentes.py`, `test_manager_agenda.py` e `test_manager_agent.py` **não** foram copiados (o Standby não os tem) |
+
+| 03/nov/2026 | **Campanhas como módulo dinâmico:** tabela `genius_next.campaigns` (`vale_de`/`vale_ate`), `app/context/campaigns.py`, bloco `campanhas_vigentes` no contexto do atendimento e do follow-up, catálogo ignora `promo:*` (`app/context/knowledge.py`, `app/reply/llm.py`, `app/reply/agent.py`, `app/durable/followup.py`, `migrations/091_campaigns.sql`) | Genius-Next#74 | `tests/test_campanhas.py`: no Standby 8 testes ficam pulados (dependem de helpers e de docs que só existem no Next). Runbook, seed e prompts v24/v8/v8 ficam só no Next |
 
 Linha nova a cada espelhamento. O detalhe da armadilha fica no `TRAPS.md` do lado em que ela apareceu.
 

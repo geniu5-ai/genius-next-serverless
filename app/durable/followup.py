@@ -42,6 +42,11 @@ from app.jobs import (
     defer_once,
     jobs,
 )
+from app.context.campaigns import (
+    CHAVE_CONTEXTO as CHAVE_CAMPANHAS,
+    campanhas_vigentes as campanhas_vigentes_hoje,
+    formatar_para_contexto as formatar_campanhas,
+)
 from app.reply.llm import _build_system_prompt, _data_atual_negocio, _secret_value
 from app.reply.split import split_human_reply
 from app.settings import get_settings
@@ -935,7 +940,7 @@ FOLLOWUP_ANGULOS: tuple[tuple[str, str], ...] = (
     ("autoridade_verdadeira", "citar um diferencial, profissional ou estrutura que conste nas informações da empresa, sem comparar com outras clínicas ou pessoas e sem usar isso para vencer uma objeção"),
     ("convite_conhecer", "convidar a conhecer a empresa pelo perfil, site ou conteúdo, apenas se o link constar nas informações do perfil"),
     ("oferta_de_verificar", "perguntar se ela quer que a equipe veja a disponibilidade da semana, em forma de pergunta e sem prometer"),
-    ("campanha_vigente", "mencionar condição ou campanha que conste nas informações e esteja vigente na data_atual; nunca campanha vencida nem mês que já passou"),
+    ("campanha_vigente", "mencionar uma campanha de campanhas_vigentes, pelo que está escrito nela; se campanhas_vigentes não existir no contexto, não cite campanha e faça uma pergunta leve sobre o que a pessoa procura"),
 )
 _FOLLOWUP_ANGULOS_NAO_NA_1A = frozenset({"convite_conhecer", "campanha_vigente"})
 # 22/out/2026 (incidente followup-contradiz-handoff, contato 9322): pressao de
@@ -1074,7 +1079,7 @@ _REGRA_SEM_COMPARACAO = (
     "\"outras famílias/pessoas fazem X mesmo com [obstáculo que ela citou]\", e nunca "
     "contorne um obstáculo que ela apontou (distância, preço, tempo) nem sugira descuido, "
     "medo ou culpa. Escassez de horários só se o perfil mandar, a conversa estiver avançada "
-    "e for verdade. Cite campanha, mês ou prazo apenas se vigente na data_atual."
+    "e for verdade. Campanha só se estiver em campanhas_vigentes; nunca escreva um mês por conta própria."
 )
 
 # Depois de objecao a conversa e' dela: reconhecer, nunca rebater.
@@ -1128,12 +1133,16 @@ def follow_up_context(
     *,
     pos_handoff: bool = False,
     data_atual: str | None = None,
+    campanhas_vigentes: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Entrada JSON do rascunho do follow-up (mesma montagem em producao e na medicao).
 
     ``data_atual``: data de hoje e dia da semana (fuso America/Fortaleza, o mesmo
     helper do atendimento). Sem ela o follow-up citava campanha vencida e
     "outubro" em novembro (03/nov/2026).
+
+    ``campanhas_vigentes``: itens ja formatados (``formatar_para_contexto``) das
+    campanhas que valem hoje; vazio ou ``None`` = a chave nao aparece.
 
     ``pos_handoff``: o ciclo nasceu de um handoff cuja marcação de equipe
     expirou sem resposta — o contexto avisa o modelo e o ângulo da vez deixa
@@ -1161,6 +1170,8 @@ def follow_up_context(
         context["client"] = client_profile
     if informacoes_da_empresa:
         context["informacoes_da_empresa"] = informacoes_da_empresa
+    if campanhas_vigentes:
+        context[CHAVE_CAMPANHAS] = campanhas_vigentes
     return context
 
 
@@ -1255,6 +1266,8 @@ def draft_follow_up_step(
         if conversation.available:
             history = [{"role": msg.role, "text": msg.text} for msg in conversation.messages]
         informacoes_da_empresa = _informacoes_da_empresa(session, tenant_id, settings)
+        # Nunca levanta: sem tabela ou com erro devolve lista vazia.
+        campanhas = formatar_campanhas(campanhas_vigentes_hoje(session, tenant_id))
         pos_handoff = False
         if origin_turn_id:
             # A decisao do turno de origem e imutavel (turns.decision), ao
@@ -1286,6 +1299,7 @@ def draft_follow_up_step(
         client_profile,
         informacoes_da_empresa,
         pos_handoff=pos_handoff,
+        campanhas_vigentes=campanhas,
     )
 
     def _gerar(temperatura: float, evitar: str | None) -> ReplyDraft | None:

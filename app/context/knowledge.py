@@ -11,6 +11,10 @@ from app.security.guard import GuardDisposition, scan_invisible_text
 
 logger = logging.getLogger(__name__)
 
+# promo:* tambem fica fora (03/nov/2026): campanha e dado com validade em
+# genius_next.campaigns e so entra no contexto por app/context/campaigns.py,
+# enquanto vigente. Uma entrada promo:* aqui seria campanha sem validade.
+#
 # persuasao:* fica fora do catalogo/fatos de proposito: e' copy de venda
 # (app/reply/prompt_profiles.py tenant_rules), nao fato verificavel, e a
 # propria label "Informacoes verificadas da empresa" que envolve isto vira
@@ -25,6 +29,7 @@ _LIST_CATALOG_SQL = _sql_text(
     FROM genius_next.knowledge
     WHERE tenant_id = :tenant_id
       AND chave NOT LIKE 'persuasao:%'
+      AND chave NOT LIKE 'promo:%'
     ORDER BY chave
     LIMIT 40
     """
@@ -37,6 +42,7 @@ _FULL_CATALOG_SQL = _sql_text(
     FROM genius_next.knowledge
     WHERE tenant_id = :tenant_id
       AND chave NOT LIKE 'persuasao:%'
+      AND chave NOT LIKE 'promo:%'
     ORDER BY chave
     LIMIT 200
     """
@@ -49,6 +55,7 @@ _OPEN_KNOWLEDGE_SQL = _sql_text(
     FROM genius_next.knowledge
     WHERE tenant_id = :tenant_id
       AND chave = :chave
+      AND chave NOT LIKE 'promo:%'
     """
 )
 
