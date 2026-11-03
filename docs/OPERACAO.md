@@ -52,7 +52,7 @@ Regra: **nenhum valor em repositório, doc, Drive, Notion ou chat.** O históric
 | Segredo | Onde | Observação |
 |---|---|---|
 | `HMAC_SECRET`, `DATABASE_URL`, `OMNIROUTE_API_KEY`, ... | variáveis do serviço no Render | fonte de verdade em execução; legíveis pela API do Render com a `RENDER_API_KEY` |
-| `RENDER_API_KEY`, `NEON_API_KEY`, `OMNIROUTE_*`, `HMAC_SECRET` | `tokens.local` em `/home/ubuntu/.config/genius/tokens.local` nas VPS 002 e 003 | cofre atual do Genius, texto puro. Fora do escopo do Standby: **o Genius Dev (VPS 003, DBOS) não deve ser alterado**. A `NEON_API_KEY` da 002 funciona (exige `org_id=org-flat-hat-11836365`); a da 003 está desatualizada |
+| `RENDER_API_KEY`, `NEON_API_KEY`, `OMNIROUTE_*`, `HMAC_SECRET` e ~110 outras | `tokens.local` em `/home/ubuntu/.config/genius/tokens.local` nas VPS 002 e 003 | cofre atual do Genius, texto puro. Fora do escopo do Standby: **o Genius Dev (VPS 003, DBOS) não deve ser alterado**. A `NEON_API_KEY` da 002 funciona (exige `org_id=org-flat-hat-11836365`); a da 003 está desatualizada |
 | `WAKE_DATABASE_URL` | segredo do repositório no GitHub | URL do Neon do role `wake_ro`, **somente leitura**; uma linha só, começando em `postgresql://`, com `?sslmode=...` e sem aspas |
 | `CONTROL_HMAC_SECRET` | segredo do GitHub **e** variável do Render | os dois com o mesmo valor |
 | `TAILSCALE_AUTHKEY` | ambiente das sessões do Claude Code | entra na tailnet `topmidiahd`; usada só quando preciso das VPS |
@@ -61,25 +61,49 @@ Segredos do GitHub são **somente escrita**: depois de salvos ninguém lê de vo
 (`${{ secrets.NOME }}`, mascarados nos logs, não chegam a PRs de forks); não são um cofre
 consultável.
 
-### Planejado: ambiente da sessão do Claude Code (ainda não criado)
+### Cofre do Standby: tabela cifrada no Neon (criado em 03/nov/2026)
 
-As configurações do **ambiente** (menu da sessão → *Edit*) persistem; só as sessões são
-descartáveis. A ideia é guardar lá apenas a chave de acesso ao Render e ler o resto por ele.
+Tabela `standby_vault.secrets` no banco do Standby (schema próprio, sem acesso para `PUBLIC`).
+Cada valor é **cifrado fora do banco** (AES-256-CBC, PBKDF2 com 200 mil iterações, via `openssl`)
+antes do `INSERT`: o servidor nunca vê o valor nem a chave, então log de statement ou vazamento
+do banco não expõem nada. O `DATABASE_URL` do app é dono do schema e consegue ler a tabela, mas só
+enxerga texto cifrado.
+
+| Nome | Para quê |
+|---|---|
+| `NEON_API_KEY`, `NEON_ORG_ID` | administração do Neon (roles, senhas) |
+| `OMNIROUTE_API_KEY`, `OPENAI_API_KEY` | modelo usado pelo agente |
+| `EVOLUTION_URL`, `EVOLUTION_API_KEY` | Evolution (somente leitura em `record_only`) |
+| `LOGFIRE_READ_TOKEN` | ler os logs do projeto `genius` |
+
+Origem: `tokens.local` da VPS 002. O que **não** foi copiado, de propósito: as outras ~110 entradas
+(token do GitHub, Cloudflare, Supabase `service_role`, login do Instagram, OCI, Slack, chaves
+administrativas da OpenAI e tokens de instâncias de clientes). Quem precisar de mais uma, grava com
+`vault.sh put`.
+
+**Acesso** (ambiente da sessão do Claude Code, menu da sessão → *Edit*):
 
 | Variável do ambiente | Para quê |
 |---|---|
-| `RENDER_API_KEY` | lê as variáveis do serviço `standby` (todas as outras credenciais do app) |
-| `NEON_API_KEY` + `NEON_ORG_ID` | só operações de administração no Neon (criar role, resetar senha). Para consultas basta o `DATABASE_URL`, que vem do Render |
+| `RENDER_API_KEY` | acha o `DATABASE_URL` do serviço (ou defina `DATABASE_URL` direto) |
+| `STANDBY_VAULT_KEY` | chave mestra do cofre; sem ela a tabela é ilegível |
 
-Notas:
-- Use uma chave **dedicada ao Claude**, que possa ser revogada sozinha. Segundo a
-  [documentação do Render](https://render.com/docs/scoped-api-keys), chaves novas podem ser
-  limitadas a um workspace e a permissões por recurso (pode estar em beta); chaves clássicas dão o
-  acesso total da conta. Confira no painel qual tipo você está criando.
-- Prefira a seção *Network secrets* / *API credentials* do ambiente, quando existir, a uma variável
-  comum.
-- O `WAKE_DATABASE_URL` não está no Render (é a senha do `wake_ro`); só dá para recuperá-lo
-  resetando a senha com a `NEON_API_KEY`.
+```bash
+scripts/vault.sh list                          # nomes, origem e data (nunca valores)
+VALOR=$(scripts/vault.sh get NEON_API_KEY)     # valor decifrado, direto para uma variável
+printf '%s' "$VALOR" | scripts/vault.sh put NOME origem
+```
+
+Regras: nunca imprima o valor em log, resultado de task ou chat; guarde a `STANDBY_VAULT_KEY`
+**só** no ambiente da sessão e num cofre seu (se for perdida, os valores são irrecuperáveis: é
+só regravar a partir do `tokens.local`). Rotação da chave mestra: decifrar tudo com a antiga e
+regravar com a nova.
+
+Limites conhecidos: `openssl enc` não autentica o texto cifrado (confidencialidade sim, detecção de
+adulteração não); a chave mestra é um ponto único de falha; quem tem `DATABASE_URL` **e**
+`STANDBY_VAULT_KEY` lê tudo. Isto contraria a regra do Genius Dev de nunca gravar chave no banco
+(`docs/GENIUS-DEV-AGENTS.md` §4); foi decisão expressa do chairman em 03/nov/2026, para o banco do
+Standby, e por isso só entrou o que o Standby usa.
 
 ### Em estudo: guardar segredos "de reserva" no Render
 
@@ -170,3 +194,5 @@ esperado: job verde e `{"status": "awake", "jobs_vencidos": 0, ...}`. Verificado
    `geniu5-ai/Genius-Next`, sem tocar nas VPS.
 8. Rotacionar as credenciais que apareceram em conversa (`wake_ro`, `CONTROL_HMAC_SECRET`) ao criar
    o cofre novo.
+9. Criar o ambiente da sessão com `RENDER_API_KEY` e `STANDBY_VAULT_KEY` (a chave mestra está num
+   arquivo local ignorado pelo git; copiar e apagar) e testar `scripts/vault.sh list` numa sessão nova.
