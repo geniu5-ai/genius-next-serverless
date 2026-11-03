@@ -70,8 +70,8 @@ caminhos oficiais acima.
 - **Escopo cirúrgico.** Toque só o que a tarefa pede. Commit só dos seus arquivos.
 - **Documentar faz parte de pronto**: o que mudou fica escrito no lugar certo, na mesma entrega
   (`docs/OPERACAO.md`, `docs/WAKE.md`; armadilha nova no `OPERACAO.md`, seção "O que já deu errado").
-- **Segredos nunca no repositório, em doc, em log ou em chat.** Cofre cifrado no Neon: `scripts/vault.sh
-  list|get|put` (precisa de `STANDBY_VAULT_KEY` e `RENDER_API_KEY` no ambiente; detalhes em
+- **Segredos nunca no repositório, em doc, em log ou em chat.** Cofre cifrado no Neon: `python scripts/vault.py
+  list|get|put` (precisa de `STANDBY_VAULT_URL` e `STANDBY_VAULT_KEY` no ambiente; detalhes em
   `docs/OPERACAO.md`, "Segredos e credenciais"). Colar valor em conversa obriga a rotacioná-lo.
 - **Git:** desenvolva na branch designada da sessão, abra PR em rascunho e acompanhe CI e revisões.
 - **Cliente antes de tudo.** O Standby é o plano B do atendimento real: nada vai ao WhatsApp
