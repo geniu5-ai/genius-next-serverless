@@ -55,6 +55,28 @@ def test_assinatura_do_script_passa_na_verificacao_do_servico():
     assert not verify_control_signature(corpo, ts, assinatura, "outro")
 
 
+@pytest.mark.parametrize(
+    "colado",
+    [
+        "postgresql://u:p@h/db",
+        "  postgresql://u:p@h/db\n",
+        '"postgresql://u:p@h/db"',
+        "'postgresql://u:p@h/db'",
+        "WAKE_DATABASE_URL=postgresql://u:p@h/db",
+        'WAKE_DATABASE_URL="postgresql://u:p@h/db"',
+    ],
+)
+def test_normalizar_aceita_o_segredo_colado_de_varias_formas(colado):
+    assert _script().normalizar(colado, "WAKE_DATABASE_URL") == "postgresql://u:p@h/db"
+
+
+def test_descrever_url_nunca_mostra_a_senha():
+    script = _script()
+    texto = script.descrever_url("postgresql://wake_ro:SENHA-SECRETA@host.neon.tech/db")
+    assert "SENHA-SECRETA" not in texto and "wake_ro" in texto and "host.neon.tech" in texto
+    assert "esquema inesperado" in script.descrever_url("http://x")
+
+
 def test_script_sem_banco_sai_com_codigo_2(monkeypatch):
     monkeypatch.delenv("WAKE_DATABASE_URL", raising=False)
     assert _script().main([]) == 2
