@@ -9,6 +9,8 @@ cair. Hoje roda em `record_only`: a resposta é gravada no `outbox` e **nada vai
 | Documento | Para quê |
 |---|---|
 | [`docs/OPERACAO.md`](docs/OPERACAO.md) | Onde está, variáveis, credenciais, como testar, histórico de problemas, pendências |
+| [`CLAUDE.md`](CLAUDE.md) | Regras para o Claude Code neste repositório (CEO técnico, autonomia, human-gate, como chamar a crew) |
+| [`docs/GENIUS-DEV-AGENTS.md`](docs/GENIUS-DEV-AGENTS.md) | Cópia de referência das regras da casa do Genius Dev (fonte: VPS 003) |
 | [`docs/WAKE.md`](docs/WAKE.md) | Por que o worker dorme no Render free, como o Actions o acorda, decisões e alternativas avaliadas |
 
 ## Atalhos
