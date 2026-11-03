@@ -197,7 +197,7 @@ Sem rede e sem banco (modelo falso, guardrails e agente): `pytest -q tests`.
 
 ## O que já deu errado e por quê
 
-Ver [`TRAPS.md`](TRAPS.md): quatorze armadilhas, cada uma com sintoma, causa, correção e regra. As mais
+Ver [`TRAPS.md`](TRAPS.md): quinze armadilhas, cada uma com sintoma, causa, correção e regra. As mais
 úteis para quem opera: #6 (segredo de URL colado errado), #8 e #9 (roles do Neon), #10 (não apagar
 arquivo de segredo antes do chairman copiar).
 
@@ -227,10 +227,10 @@ GitHub. Primeira cópia feita em 03/nov/2026.
 
 | Item | Valor |
 |---|---|
-| Onde | bucket `genius` do Cloudflare R2, pasta `backups/standby/repo/` (as outras pastas de `backups/` são `genius-specific/` e `genius_dev/`; nada nelas foi tocado) |
-| Nome | `standby-<data UTC>-<sha7 da main>.bundle` + `.sha256` |
-| Primeira cópia | `standby-20261103T040736Z-41afa5e.bundle`, 462 250 bytes, sha256 `2eafc4fb…47f42`, 22 commits, conferida por download |
-| Credenciais | `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` do `tokens.local` da VPS 002 (**só lidas**, nunca copiadas para o repositório nem para o cofre) |
+| Onde | bucket `genius` do Cloudflare R2, **pasta `Genius-Standby/` na raiz** (o mesmo bucket guarda `backups/genius_dev/` e `backups/genius-specific/`; há ainda o bucket `genius-clientes`, que o Standby não usa nem toca) |
+| Nome | `Genius-Standby/standby-<data UTC>-<sha7 da main>.bundle` + `.sha256` + `LEIA-ME.txt` |
+| Primeira tentativa | em 03/nov/2026 foi gravada em `backups/standby/repo/`, dentro de duas pastas, e passou despercebida na raiz; foi refeita em `Genius-Standby/` e a cópia antiga removida (`TRAPS` #15) |
+| Credenciais | `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: lidas do `tokens.local` da VPS 002 (só leitura) e guardadas no cofre (`R2_ACCESS_KEY_ID` e `R2_SECRET_ACCESS_KEY` em `aead2`, que pede as duas partes da chave). O R2_SECRET dá escrita e **apagar** no bucket inteiro, inclusive nos backups do Genius Dev: use só para este backup |
 | Cifrado? | **Não.** O bundle tem todo o histórico (inclui a chave do `CPFHUB_API_KEY`, `TRAPS` #14). Só em bucket privado |
 
 ```bash

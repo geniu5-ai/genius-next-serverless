@@ -77,7 +77,7 @@ caminhos oficiais acima.
   fica fora do ambiente; detalhes
   em `docs/OPERACAO.md`, "Cofre"). Prefira `vault.py run NOME -- comando` a imprimir o valor. Colar valor em conversa obriga a rotacioná-lo.
 - **Git:** desenvolva na branch designada da sessão, abra PR em rascunho e acompanhe CI e revisões.
-- **Backup do repo:** `scripts/backup_repo.sh --subir` (R2, `backups/standby/repo/`); varra o histórico atrás de segredos antes de levar qualquer cópia para fora (`TRAPS` #14).
+- **Backup do repo:** `scripts/backup_repo.sh --subir` (R2, pasta `Genius-Standby/`); varra o histórico atrás de segredos antes de levar qualquer cópia para fora (`TRAPS` #14).
 - **`tokens.local` das VPS: só leitura.** Copiar chave dele para o cofre é permitido; alterá-lo, nunca.
   Não apague arquivo `*.local` com segredo antes de o chairman confirmar que copiou (`TRAPS` #10).
 - **Cliente antes de tudo.** O Standby é o plano B do atendimento real: nada vai ao WhatsApp

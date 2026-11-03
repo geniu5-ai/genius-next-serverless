@@ -21,7 +21,7 @@ bloco de estado mais novo divergir de um texto mais antigo, vale o bloco.
 > - **Roles do Neon criadas por SQL**, nunca pela API (`TRAPS` #8): `wake_ro` (lê 5 tabelas) e `vault_rw` (só executa as funções do cofre).
 > - **Rename:** o app era `genius-next-serverless`, agora é Standby (repositório `geniu5-ai/standby`, serviço `standby`). O Genius Dev (VPS 003, DBOS) e os docs do Next citam o nome antigo; o GitHub mantém o redirecionamento.
 > - **Abertos:** (1) cadastrar `STANDBY_VAULT_URL`/`STANDBY_VAULT_KEY` no ambiente da sessão e guardar `STANDBY_VAULT_KEY2` **fora** dele (o chairman estava no celular; os valores estão em `vault-env.local`, ignorado pelo git, **não apague antes de ele copiar**, `TRAPS` #10); (2) rotacionar `wake_ro`, `CONTROL_HMAC_SECRET` e o que apareceu em conversa; (3) paridade com o Next (status, lessons, embeds, juiz); (4) failover automático; (5) job `conversation_turn` com `failed` de 02/nov 05:49 UTC ainda não analisado; (6) **rotacionar a `CPFHUB_API_KEY` que está fixa em `app/tools/procuracao.py`** (`TRAPS` #14).
-> - **Backup do repositório:** `git bundle` completo no R2 (`backups/standby/repo/`), conferido por download; `scripts/backup_repo.sh`. Repetir depois de mudanças grandes (`OPERACAO.md`, "Backup do repositório").
+> - **Backup do repositório:** `git bundle` completo no R2 (`Genius-Standby/`, raiz do bucket `genius`), conferido por download; `scripts/backup_repo.sh`. Repetir depois de mudanças grandes (`OPERACAO.md`, "Backup do repositório").
 
 ## Sessão fria: por onde começar
 

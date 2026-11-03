@@ -130,3 +130,12 @@ que a corrige. As do Next que também valem aqui estão citadas pelo número del
 
 **Regra:** valor real nunca é o segundo argumento de `os.getenv`. Antes de qualquer backup ou cópia para fora, varrer **todo o histórico** (`git log --all -p | grep -E 'sk-|npg_|ghp_|postgres(ql)?://[^:]+:[^@]+@|[0-9a-f]{64}'`) e tratar o que aparecer. O mesmo código existe no Genius Next: conferir lá.
 
+### 15. Backup no R2 "sumiu": gravado em pasta aninhada demais
+**Data:** 03/nov/2026 | **Impacto:** o backup do repositório existia (conferido por download e hash), mas estava em `backups/standby/repo/` no bucket `genius`; na raiz só aparecia `backups/`, e o chairman concluiu que o backup não tinha dado certo. Sem perda de dado.
+
+**Causa:** escolhi um caminho que imitava a convenção das pastas vizinhas (`backups/<produto>/`) sem perguntar onde o chairman olharia; no R2 pasta é só prefixo de chave, então ela só aparece se alguém abrir cada nível.
+
+**Correção:** pasta `Genius-Standby/` na raiz do bucket, com `LEIA-ME.txt`; cópia antiga removida (só as duas chaves que eu mesmo criei).
+
+**Regra:** o destino de um backup é combinado com quem vai procurá-lo, e o resultado é mostrado do jeito que essa pessoa o vê (caminho exato, nome do bucket). Confirmar "existe" pela API não basta; diga onde olhar.
+

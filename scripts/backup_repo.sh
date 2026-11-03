@@ -6,7 +6,8 @@
 #   scripts/backup_repo.sh --so-subir ARQ   sobe um bundle que ja existe (nao cria nada)
 #
 # Ambiente para subir: R2_ENDPOINT, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY.
-# Destino: <bucket>/backups/standby/repo/standby-<data UTC>-<sha7 da main>.bundle (+ .sha256).
+# Destino: <bucket>/Genius-Standby/standby-<data UTC>-<sha7 da main>.bundle (+ .sha256), na raiz do bucket.
+# Outra pasta: R2_PREFIX=nome (padrao Genius-Standby).
 # Nunca sobrescreve: se o nome ja existe, para com codigo 4. Confere o objeto por download e hash.
 # O bundle NAO e cifrado: contem todo o historico (inclua so em bucket privado).
 set -euo pipefail
@@ -42,7 +43,8 @@ for v in R2_ENDPOINT R2_BUCKET R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY; do : "${!v
 nome="$(basename "$arq")"; sha="$(sha256sum "$arq" | cut -d' ' -f1)"
 printf '%s  %s\n' "$sha" "$nome" >"$D/$nome.sha256"
 ep="${R2_ENDPOINT%/}"; case "$ep" in */"$R2_BUCKET") ep="${ep%/"$R2_BUCKET"}";; esac
-base="$ep/$R2_BUCKET/backups/standby/repo"
+prefixo="${R2_PREFIX:-Genius-Standby}"
+base="$ep/$R2_BUCKET/$prefixo"
 s3() { curl -sS -m 120 --aws-sigv4 "aws:amz:auto:s3" --user "$R2_ACCESS_KEY_ID:$R2_SECRET_ACCESS_KEY" "$@"; }
 
 for f in "$nome" "$nome.sha256"; do
@@ -59,4 +61,4 @@ done
 s3 -o "$D/volta" "$base/$nome"
 [ "$(sha256sum "$D/volta" | cut -d' ' -f1)" = "$sha" ] || { echo "objeto no R2 diverge do local" >&2; exit 6; }
 echo "conferido por download: sha256 $sha" >&2
-echo "backups/standby/repo/$nome"
+echo "$prefixo/$nome"
