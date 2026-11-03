@@ -45,13 +45,50 @@ O plano free **dorme após ~15 min sem tráfego de entrada**: a primeira chamada
 
 ## Segredos e credenciais (onde ficam; nunca os valores)
 
+Regra: **nenhum valor em repositório, doc, Drive, Notion ou chat.** O histórico do git guarda para sempre.
+
+### Hoje
+
 | Segredo | Onde | Observação |
 |---|---|---|
-| `HMAC_SECRET`, `DATABASE_URL`, `OMNIROUTE_API_KEY`, ... | variáveis do serviço no Render | lidas pela API do Render com a `RENDER_API_KEY` |
-| `RENDER_API_KEY`, `NEON_API_KEY`, `OMNIROUTE_*`, `HMAC_SECRET` | `tokens.local` em `/home/ubuntu/.config/genius/tokens.local` nas VPS 002 e 003 | a `NEON_API_KEY` da **002** funciona (exige `org_id=org-flat-hat-11836365`); a da 003 está desatualizada |
+| `HMAC_SECRET`, `DATABASE_URL`, `OMNIROUTE_API_KEY`, ... | variáveis do serviço no Render | fonte de verdade em execução; legíveis pela API do Render com a `RENDER_API_KEY` |
+| `RENDER_API_KEY`, `NEON_API_KEY`, `OMNIROUTE_*`, `HMAC_SECRET` | `tokens.local` em `/home/ubuntu/.config/genius/tokens.local` nas VPS 002 e 003 | cofre atual do Genius, texto puro. Fora do escopo do Standby: **o Genius Dev (VPS 003, DBOS) não deve ser alterado**. A `NEON_API_KEY` da 002 funciona (exige `org_id=org-flat-hat-11836365`); a da 003 está desatualizada |
 | `WAKE_DATABASE_URL` | segredo do repositório no GitHub | URL do Neon do role `wake_ro`, **somente leitura**; uma linha só, começando em `postgresql://`, com `?sslmode=...` e sem aspas |
 | `CONTROL_HMAC_SECRET` | segredo do GitHub **e** variável do Render | os dois com o mesmo valor |
-| `TAILSCALE_AUTHKEY` | ambiente das sessões do Claude Code | entra na tailnet `topmidiahd` para acessar as VPS 002 (`n8n002`) e 003 (`camargorock`) por `tailscale ssh` |
+| `TAILSCALE_AUTHKEY` | ambiente das sessões do Claude Code | entra na tailnet `topmidiahd`; usada só quando preciso das VPS |
+
+Segredos do GitHub são **somente escrita**: depois de salvos ninguém lê de volta. Servem ao Actions
+(`${{ secrets.NOME }}`, mascarados nos logs, não chegam a PRs de forks); não são um cofre
+consultável.
+
+### Planejado: ambiente da sessão do Claude Code (ainda não criado)
+
+As configurações do **ambiente** (menu da sessão → *Edit*) persistem; só as sessões são
+descartáveis. A ideia é guardar lá apenas a chave de acesso ao Render e ler o resto por ele.
+
+| Variável do ambiente | Para quê |
+|---|---|
+| `RENDER_API_KEY` | lê as variáveis do serviço `standby` (todas as outras credenciais do app) |
+| `NEON_API_KEY` + `NEON_ORG_ID` | só operações de administração no Neon (criar role, resetar senha). Para consultas basta o `DATABASE_URL`, que vem do Render |
+
+Notas:
+- Use uma chave **dedicada ao Claude**, que possa ser revogada sozinha. Segundo a
+  [documentação do Render](https://render.com/docs/scoped-api-keys), chaves novas podem ser
+  limitadas a um workspace e a permissões por recurso (pode estar em beta); chaves clássicas dão o
+  acesso total da conta. Confira no painel qual tipo você está criando.
+- Prefira a seção *Network secrets* / *API credentials* do ambiente, quando existir, a uma variável
+  comum.
+- O `WAKE_DATABASE_URL` não está no Render (é a senha do `wake_ro`); só dá para recuperá-lo
+  resetando a senha com a `NEON_API_KEY`.
+
+### Em estudo: guardar segredos "de reserva" no Render
+
+O Render tem *Environment Groups*: conjuntos de variáveis e arquivos secretos que podem ser
+ligados a vários serviços ([docs](https://render.com/docs/configure-environment-variables)). Um grupo
+**sem nenhum serviço ligado** não é injetado em processo algum, então serviria de cofre. Em aberto:
+confirmar no painel se o plano free oferece grupos e quantos. **Não** coloque segredos de reserva
+como variáveis de um serviço em execução: todas elas entram no processo e aparecem no painel e
+nos logs de quem tiver acesso.
 
 Role do Neon `wake_ro`: `USAGE` nos schemas `public` e `genius_next` e `SELECT` apenas em
 `procrastinate_jobs`, `procrastinate_workers`, `genius_next.events`, `genius_next.clients` e
@@ -126,3 +163,10 @@ esperado: job verde e `{"status": "awake", "jobs_vencidos": 0, ...}`. Verificado
 4. Failover automático: o workflow que vigia a VPS 002 e liga o `live` só quando ela cair ainda **não existe** (ver `WAKE.md`, "Próximos passos").
 5. Investigar o job `conversation_turn` em `failed` de 02/nov 05:49 UTC (ainda não analisado).
 6. Rotinas do Next que mencionam o nome antigo (`geniu5-ai/genius-next-serverless`) fora deste repositório: `scripts/core/dbos/github_monitor.py` no Genius-Dev (VPS 003) e `docs/HANDOFF.md` / `docs/TRAPS.md` no Genius-Next (VPS 002). Atualizar junto com o rename do repositório.
+7. Validar a paridade do Standby com o Next, módulo a módulo (nada disto foi comparado ainda):
+   `app/status/` (classificação de status igual à do Next), lessons (`app/agent/lesson*.py`, busca e
+   extração), embeds (hoje sem sidecar de embedding no Render), o juiz (avaliação/guardrails de
+   qualidade, `deepeval`) e os demais módulos de `app/`. Fazer por comparação com o repositório
+   `geniu5-ai/Genius-Next`, sem tocar nas VPS.
+8. Rotacionar as credenciais que apareceram em conversa (`wake_ro`, `CONTROL_HMAC_SECRET`) ao criar
+   o cofre novo.
