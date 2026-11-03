@@ -1,7 +1,24 @@
-# Genius Next Serverless
+# Standby
 
-Genius Next (FastAPI + Procrastinate) rodando no Render com banco no Neon.
+App de **contingência** do Genius Next: FastAPI + Procrastinate, rodando no Render com banco no
+Neon. É a alternativa pronta para subir se o agente principal (`genius-next.service`, VPS 002)
+cair. Hoje roda em `record_only`: a resposta é gravada no `outbox` e **nada vai ao WhatsApp**.
 
-- Operação, variáveis, teste e histórico de problemas: [`docs/OPERACAO.md`](docs/OPERACAO.md)
+## Documentação
+
+| Documento | Para quê |
+|---|---|
+| [`docs/OPERACAO.md`](docs/OPERACAO.md) | Onde está, variáveis, credenciais, como testar, histórico de problemas, pendências |
+| [`docs/WAKE.md`](docs/WAKE.md) | Por que o worker dorme no Render free, como o Actions o acorda, decisões e alternativas avaliadas |
+
+## Atalhos
+
 - Testar o webhook: `scripts/testar_webhook.sh`
+- Medir se há trabalho vencido (só leitura): `python scripts/wake_check.py --check-only`
 - Testes: `pytest -q tests`
+- Workflows: `monitor.yml` (saúde, a cada 5 min), `wake.yml` (acorda o worker, a cada 20 min),
+  `neon-preview-deploy.yml` (branch Neon por PR)
+
+> O repositório e o serviço no Render se chamam **Standby**. O subdomínio do Render
+> (`genius-next-serverless.onrender.com`) vem do nome antigo e não pode ser alterado num serviço
+> existente; veja `docs/OPERACAO.md`.
