@@ -68,12 +68,16 @@ caminhos oficiais acima.
 ## Regras de trabalho
 
 - **Escopo cirúrgico.** Toque só o que a tarefa pede. Commit só dos seus arquivos.
-- **Documentar faz parte de pronto**: o que mudou fica escrito no lugar certo, na mesma entrega
-  (`docs/OPERACAO.md`, `docs/WAKE.md`; armadilha nova no `OPERACAO.md`, seção "O que já deu errado").
+- **Documentar faz parte de pronto**: o que mudou fica escrito no lugar certo, na mesma entrega.
+  Armadilha nova (sintoma, causa, correção, regra) em `docs/TRAPS.md`; estado ou rotina que muda o início
+  de uma sessão fria em `docs/HANDOFF.md`; operação em `docs/OPERACAO.md`; wake em `docs/WAKE.md`.
+  Mesmo padrão do Genius Next.
 - **Segredos nunca no repositório, em doc, em log ou em chat.** Cofre cifrado no Neon: `python scripts/vault.py
-  list|get|put` (precisa de `STANDBY_VAULT_URL` e `STANDBY_VAULT_KEY` no ambiente; detalhes em
-  `docs/OPERACAO.md`, "Segredos e credenciais"). Colar valor em conversa obriga a rotacioná-lo.
+  list|get|put|run|log|export` (precisa de `STANDBY_VAULT_URL` e `STANDBY_VAULT_KEY` no ambiente; detalhes
+  em `docs/OPERACAO.md`, "Cofre"). Prefira `vault.py run NOME -- comando` a imprimir o valor. Colar valor em conversa obriga a rotacioná-lo.
 - **Git:** desenvolva na branch designada da sessão, abra PR em rascunho e acompanhe CI e revisões.
+- **`tokens.local` das VPS: só leitura.** Copiar chave dele para o cofre é permitido; alterá-lo, nunca.
+  Não apague arquivo `*.local` com segredo antes de o chairman confirmar que copiou (`TRAPS` #10).
 - **Cliente antes de tudo.** O Standby é o plano B do atendimento real: nada vai ao WhatsApp
   (`record_only`) sem a promoção acima. Na dúvida entre mandar uma resposta incerta e segurar,
   segure.

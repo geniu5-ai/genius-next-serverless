@@ -61,16 +61,32 @@ Segredos do GitHub são **somente escrita**: depois de salvos ninguém lê de vo
 (`${{ secrets.NOME }}`, mascarados nos logs, não chegam a PRs de forks); não são um cofre
 consultável.
 
-### Cofre do Standby: tabela cifrada no Neon (criado em 03/nov/2026)
+### Cofre do Standby: segredos cifrados no Neon (03/nov/2026)
 
-Tabela `standby_vault.secrets` no banco do Standby. Cada valor é **cifrado fora do banco**
-(AES-256-GCM, autenticada) antes do `INSERT`: o servidor nunca vê valor nem chave, então log de
-statement ou vazamento do banco não expõem nada. A chave de 256 bits sai da chave mestra por
-HKDF-SHA256 e o **nome do segredo entra como dado autenticado (AAD)**: alterar o texto cifrado, ou
-trocar o conteúdo de duas linhas de lugar, faz a decifragem falhar em vez de devolver lixo
-(testado em 03/nov). Formato em `value_enc`: base64(`0x01` + nonce de 12 bytes + texto cifrado + tag),
-com `fmt = 'aead1'`. A primeira versão (AES-CBC via `openssl`, `fmt = 'cbc'`) foi migrada e
-descartada.
+Schema `standby_vault` no banco do Standby. Cada valor é **cifrado fora do banco** (AES-256-GCM,
+autenticada) antes de ser enviado: o servidor nunca vê valor nem chave, então log de statement ou
+vazamento do banco não expõem nada. A chave de 256 bits sai da chave mestra por HKDF-SHA256 e o
+**nome do segredo entra como dado autenticado (AAD)**: alterar o texto cifrado, ou trocar o
+conteúdo de duas linhas de lugar, faz a decifragem falhar (testado). Formato em `value_enc`:
+base64(`0x01` + nonce de 12 bytes + texto cifrado + tag), com `fmt = 'aead1'`.
+
+**Acesso só por funções** (`scripts/vault_schema.sql`, `SECURITY DEFINER`, `search_path` fixo,
+`EXECUTE` revogado de `PUBLIC`). A role `vault_rw` **não tem acesso às tabelas**; só executa:
+
+| Função | Faz |
+|---|---|
+| `vault_get(nome)` | devolve o texto cifrado e **registra o acesso** em `access_log` |
+| `vault_list()` | nomes, formato, origem e data (sem valores) |
+| `vault_put(...)` | grava e guarda a versão em `secret_versions` |
+| `vault_delete(nome)` | apaga, mas guarda a última versão no histórico |
+| `vault_history(nome)` / `vault_restore(nome, id)` | versões (quem, quando, ação) e volta a uma delas |
+| `vault_export()` | todo o texto cifrado, para backup (registra o acesso) |
+| `vault_access_log(n)` | últimos `n` acessos: quem leu o quê e quando |
+
+`secret_versions` e `access_log` são **somente de inserção**: gatilhos recusam `UPDATE`, `DELETE` e
+`TRUNCATE`, inclusive do dono do banco (que pode desligar o gatilho, e isso deixa rastro no catálogo,
+mas não no log). O rótulo de quem chamou vem de `application_name` (`vault.py:usuário@máquina`, ou
+`STANDBY_VAULT_ACTOR`): é informativo, não prova.
 
 | Nome | Para quê |
 |---|---|
@@ -80,41 +96,45 @@ descartada.
 | `EVOLUTION_URL`, `EVOLUTION_API_KEY` | Evolution (somente leitura em `record_only`) |
 | `LOGFIRE_READ_TOKEN` | ler os logs do projeto `genius` |
 
-Origem: `tokens.local` da VPS 002. O que **não** foi copiado, de propósito: as outras ~110 entradas
-(token do GitHub, Cloudflare, Supabase `service_role`, login do Instagram, OCI, Slack, chaves
-administrativas da OpenAI e tokens de instâncias de clientes). Quem precisar de mais uma, grava com
-`vault.py put`.
+Origem: `tokens.local` da VPS 002, **só lido, nunca alterado**. O que **não** foi copiado, de
+propósito: as outras ~110 entradas (token do GitHub, Cloudflare, Supabase `service_role`, login do
+Instagram, OCI, Slack, chaves administrativas da OpenAI e tokens de instâncias de clientes).
 
-**Acesso:** a sessão do Claude Code precisa de só duas variáveis no ambiente (menu da sessão →
-*Edit*), e o resto sai do cofre:
+**Acesso:** a sessão do Claude Code precisa de duas variáveis no ambiente (menu da sessão →
+*Edit*); o resto sai do cofre, inclusive a `RENDER_API_KEY`:
 
 | Variável do ambiente | Para quê |
 |---|---|
-| `STANDBY_VAULT_URL` | URL do Neon da role `vault_rw`, que **só enxerga o schema `standby_vault`**. Endpoint direto (sem `-pooler`, ver "O que já deu errado") |
+| `STANDBY_VAULT_URL` | URL do Neon da role `vault_rw`, **endpoint direto** (sem `-pooler`, `TRAPS` #9) |
 | `STANDBY_VAULT_KEY` | chave mestra: 64 hexadecimais aleatórios; sem ela a tabela é ilegível |
 
 ```bash
-python scripts/vault.py list                       # nomes, formato, origem e data (nunca valores)
-VALOR=$(python scripts/vault.py get NEON_API_KEY)  # valor decifrado, direto para uma variável
+python scripts/vault.py list                          # nomes, formato, origem e data (nunca valores)
+VALOR=$(python scripts/vault.py get NEON_API_KEY)     # valor decifrado, direto para uma variável
 printf '%s' "$VALOR" | python scripts/vault.py put NOME origem
-python scripts/vault.py delete NOME
-NOVA=<nova chave> python scripts/vault.py rotate   # recifra tudo com a chave nova, numa transação
+python scripts/vault.py run RENDER_API_KEY -- ./meu_script.sh   # segredo só no ambiente do filho
+python scripts/vault.py delete NOME                   # recuperável: history NOME / restore NOME ID
+python scripts/vault.py log 20                        # últimos 20 acessos
+python scripts/vault.py export backup.json            # só texto cifrado + sha256 (0600); import volta
+NOVA=<nova chave> python scripts/vault.py rotate      # recifra tudo com a chave nova, numa transação
 ```
 
-Requer `cryptography` e `psycopg` (`pip install cryptography "psycopg[binary]"`). Como a
-`RENDER_API_KEY` está no cofre, **ela não precisa mais estar no ambiente da sessão**.
+Requer `cryptography` e `psycopg` (`pip install cryptography "psycopg[binary]"`). Instalar o
+esquema ou atualizá-lo: `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/vault_schema.sql` (dono
+do banco; idempotente). Backup (`export`) fica fora do banco: gerenciador de senhas ou Drive.
 
-Regras: nunca imprima o valor em log, resultado de task ou chat; guarde a `STANDBY_VAULT_KEY` **só**
-no ambiente da sessão e num cofre seu (se for perdida, os valores são irrecuperáveis: é só regravar
-a partir do `tokens.local`).
+Regras: nunca imprima o valor em log, resultado de task ou chat (`run` existe para isso); guarde a
+`STANDBY_VAULT_KEY` **só** no ambiente da sessão e num cofre seu (se for perdida, os valores são
+irrecuperáveis: regrave a partir do `tokens.local`); **não apague arquivo `*.local` com segredo
+antes de o chairman confirmar que copiou** (`TRAPS` #10).
 
 Limites conhecidos:
-- A chave mestra é ponto único de falha: quem tem `STANDBY_VAULT_URL` **e** `STANDBY_VAULT_KEY`
-  lê tudo. Mantenha as duas em lugares diferentes quando puder.
-- AES-GCM detecta linha adulterada ou trocada, mas **não** linha apagada nem devolvida a uma
-  versão antiga.
-- O dono do banco (`neondb_owner`, que é o `DATABASE_URL` do app) é `neon_superuser` e **consegue ler
-  e alterar a tabela**; vê só texto cifrado e não consegue forjar um valor sem a chave.
+- A chave mestra é ponto único de falha: quem tem `STANDBY_VAULT_URL` **e** `STANDBY_VAULT_KEY` lê
+  tudo. Mantenha as duas em lugares diferentes quando puder.
+- O dono do banco (`neondb_owner`, o `DATABASE_URL` do app) é `neon_superuser`: lê e altera tudo,
+  inclusive desligar os gatilhos. Vê só texto cifrado e não forja um valor sem a chave; apagar
+  continua possível (por isso o backup).
+- O log registra o rótulo informado pelo cliente (`application_name`), não a identidade de quem usa.
 - Isto contraria a regra do Genius Dev de nunca gravar chave no banco
   (`docs/GENIUS-DEV-AGENTS.md` §4); foi decisão expressa do chairman em 03/nov/2026, para o banco do
   Standby, e por isso só entrou o que o Standby usa.
@@ -124,15 +144,11 @@ Limites conhecidos:
 | Role | Pode | Não pode |
 |---|---|---|
 | `wake_ro` (Actions, `WAKE_DATABASE_URL`) | `USAGE` em `public` e `genius_next`; `SELECT` em `procrastinate_jobs`, `procrastinate_workers`, `genius_next.events`, `genius_next.clients`, `genius_next.outbox` | escrever, criar objetos ou roles, ler o cofre ou qualquer outra tabela |
-| `vault_rw` (cofre, `STANDBY_VAULT_URL`) | `SELECT/INSERT/UPDATE/DELETE` em `standby_vault.secrets` | ler `genius_next`/`procrastinate_*`, criar objetos ou roles, apagar a tabela |
+| `vault_rw` (cofre, `STANDBY_VAULT_URL`) | `EXECUTE` nas funções `standby_vault.vault_*` | ler ou escrever as tabelas do cofre diretamente, ler `genius_next`/`procrastinate_*`, criar objetos ou roles |
 
-**Como criar role no Neon: por SQL, nunca pela API/console.** Roles criadas pela API ou pelo console
-entram em `neon_superuser` (`CREATEROLE`, `CREATEDB`, `pg_read_all_data`, `pg_write_all_data`), ou
-seja, enxergam e alteram tudo mesmo sem nenhum `GRANT`. O `wake_ro` e o `vault_rw` nasceram assim
-e, durante algumas horas de 03/nov, o `wake_ro` **não era** somente leitura apesar do que estava
-escrito aqui. Foram apagados e recriados com `CREATE ROLE ... LOGIN PASSWORD ... NOSUPERUSER
-NOCREATEDB NOCREATEROLE`, e os grants acima foram verificados com consultas permitidas e negadas
-(com `select current_user` antes, para um "negado" não ser só falha de login).
+**Role no Neon nasce por SQL, nunca pela API/console** (`TRAPS` #8): as criadas pela API entram em
+`neon_superuser` e enxergam e alteram tudo mesmo sem `GRANT`. Depois de criar, prove o isolamento com
+consultas permitidas e negadas, com `select current_user` antes.
 
 ### Em estudo: guardar segredos "de reserva" no Render
 
@@ -175,17 +191,9 @@ Sem rede e sem banco (modelo falso, guardrails e agente): `pytest -q tests`.
 
 ## O que já deu errado e por quê
 
-| Sintoma | Causa | Correção |
-|---|---|---|
-| `401` em todo webhook | Teste na URL da VPS (`genius-next.geniuslabs.pro`), não do Render; e `tenant_registry` vazio | URL do Render; cadastrar a instância |
-| `503`, nada gravado | `clients_status_check` do Neon aceitava `new/off` em vez de `open/block` | Constraint igual ao baseline (Next TRAPS #82) |
-| Turno `failed`: `DEEPSEEK_API_KEY` | Motor `agent` com o modelo DeepSeek padrão, sem a chave | `REPLY_AGENT_MODEL=openai:gpt-pool` + `OPENAI_*` |
-| Toda resposta virava "Vou confirmar isso com a equipe" | Guarda de saída dependia do sidecar llm-guard, inexistente no Render | Guarda local + `OutputGuardrail` (PR #1; Next TRAPS #78) |
-| Motor `legacy` respondia `action: "function"` | `gpt-oss` não segue o envelope JSON do legacy | Usar o motor `agent` |
-| Workflow `Wake do worker` falhou com `ProgrammingError` | Segredo `WAKE_DATABASE_URL` colado com prefixo `NOME=`, aspas, espaço ou quebrado em duas linhas (sem o `?` antes de `sslmode`): o psycopg recusa a URL | Script tolera prefixo, aspas e espaços (PR #5); a quebra de linha precisa ser corrigida no segredo |
-| `import app.wake` no Actions falhava com `No module named 'app.durable'` | `app/__init__.py` importa o app inteiro e o Actions só instala o `psycopg` | `scripts/wake_check.py` carrega `app/wake.py` pelo caminho |
-| `invalid role OID` ao conectar com uma role recriada pelo pooler do Neon | O pooler (`-pooler`) reaproveita conexões da role apagada com o mesmo nome | Usar o endpoint direto (sem `-pooler`) para a role nova, ou esperar o pooler reciclar |
-| `wake_ro`/`vault_rw` enxergavam e alteravam todas as tabelas | Roles criadas pela API do Neon são `neon_superuser` (`pg_read_all_data` e `pg_write_all_data`) | Recriar por SQL com `NOSUPERUSER NOCREATEDB NOCREATEROLE` e conceder só o necessário |
+Ver [`TRAPS.md`](TRAPS.md): doze armadilhas, cada uma com sintoma, causa, correção e regra. As mais
+úteis para quem opera: #6 (segredo de URL colado errado), #8 e #9 (roles do Neon), #10 (não apagar
+arquivo de segredo antes do chairman copiar).
 
 ## Wake do worker (Actions)
 
