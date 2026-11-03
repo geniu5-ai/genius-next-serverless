@@ -1,7 +1,8 @@
 # AGENTS.md: Standby
 
 Regras deste repositório para qualquer agente (Claude Code, Hermes, OpenCode, Senior, CommandCode).
-O `CLAUDE.md` importa este arquivo. Standby é o app de **contingência** do Genius Next (FastAPI +
+O `CLAUDE.md` é uma cópia gerada do `AGENTS.md`: edite só o `AGENTS.md` e rode
+`python scripts/sync_agents.py`. Standby é o app de **contingência** do Genius Next (FastAPI +
 Procrastinate, Render + Neon). Leia primeiro [`docs/HANDOFF.md`](docs/HANDOFF.md),
 [`docs/OPERACAO.md`](docs/OPERACAO.md) e [`docs/WAKE.md`](docs/WAKE.md). As regras da casa do Genius
 Dev, de onde estas derivam, estão copiadas em [`docs/GENIUS-DEV-AGENTS.md`](docs/GENIUS-DEV-AGENTS.md)

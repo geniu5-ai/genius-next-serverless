@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -340,31 +342,62 @@ def test_http_erro_do_banco_vira_cofre_error_sem_vazar_a_url(monkeypatch):
     assert "versao 9 de A nao existe" in str(exc.value) and "senha" not in str(exc.value)
 
 
-def test_transporte_auto_escolhe_http_quando_a_porta_nao_abre(monkeypatch):
-    v = _vault()
+def _sem_cache(monkeypatch, v, tmp_path):
     monkeypatch.setenv("STANDBY_VAULT_URL", URL_FALSA)
     monkeypatch.delenv("STANDBY_VAULT_TRANSPORT", raising=False)
-
-    def sem_porta(*a, **k):
-        raise OSError("bloqueada")
-
-    monkeypatch.setattr(v.socket, "create_connection", sem_porta)
+    monkeypatch.setattr(v.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(v, "_TRANSPORTE", None)
+
+
+def test_transporte_auto_escolhe_http_quando_a_porta_nao_abre(monkeypatch, tmp_path):
+    v = _vault()
+    _sem_cache(monkeypatch, v, tmp_path)
+    monkeypatch.setattr(v, "_sondar", lambda *a, **k: "http")
     assert v._transporte() == "http" and isinstance(v._conectar(), v._Http)
 
 
-def test_transporte_auto_usa_pg_quando_a_porta_abre_e_o_ambiente_manda(monkeypatch):
+def test_transporte_auto_usa_pg_quando_a_porta_abre_e_o_ambiente_manda(monkeypatch, tmp_path):
     v = _vault()
-    monkeypatch.setenv("STANDBY_VAULT_URL", URL_FALSA)
-
-    class Aberta:
-        def close(self):
-            pass
-
-    monkeypatch.setattr(v.socket, "create_connection", lambda *a, **k: Aberta())
-    monkeypatch.delenv("STANDBY_VAULT_TRANSPORT", raising=False)
-    monkeypatch.setattr(v, "_TRANSPORTE", None)
+    _sem_cache(monkeypatch, v, tmp_path)
+    monkeypatch.setattr(v, "_sondar", lambda *a, **k: "pg")
     assert v._transporte() == "pg" and isinstance(v._conectar(), v._Pg)
     monkeypatch.setenv("STANDBY_VAULT_TRANSPORT", "http")  # o ambiente manda
     monkeypatch.setattr(v, "_TRANSPORTE", None)
     assert v._transporte() == "http"
+
+
+def test_decisao_do_transporte_fica_em_cache_e_expira(monkeypatch, tmp_path):
+    v = _vault()
+    _sem_cache(monkeypatch, v, tmp_path)
+    chamadas = []
+    monkeypatch.setattr(v, "_sondar", lambda *a, **k: chamadas.append(1) or "http")
+    assert v._transporte() == "http" and len(chamadas) == 1
+    monkeypatch.setattr(v, "_TRANSPORTE", None)  # outro processo: le do arquivo, nao sonda
+    assert v._transporte() == "http" and len(chamadas) == 1
+    # cache vencido: sonda de novo
+    arquivo = v._arquivo_cache("ep-teste.c-2.sa-east-1.aws.neon.tech")
+    velho = time.time() - v._CACHE_TTL_S - 5
+    os.utime(arquivo, (velho, velho))
+    monkeypatch.setattr(v, "_TRANSPORTE", None)
+    monkeypatch.setattr(v, "_sondar", lambda *a, **k: chamadas.append(1) or "pg")
+    assert v._transporte() == "pg" and len(chamadas) == 2
+
+
+def test_cache_corrompido_e_ignorado(monkeypatch, tmp_path):
+    v = _vault()
+    _sem_cache(monkeypatch, v, tmp_path)
+    v._arquivo_cache("ep-teste.c-2.sa-east-1.aws.neon.tech").write_text("lixo")
+    monkeypatch.setattr(v, "_sondar", lambda *a, **k: "http")
+    assert v._transporte() == "http"
+
+
+def test_sondar_respeita_o_prazo_total_mesmo_com_varias_rotas(monkeypatch):
+    v = _vault()
+    rotas = [(2, 1, 6, "", ("10.255.255.1", 5432)), (2, 1, 6, "", ("10.255.255.2", 5432)),
+             (2, 1, 6, "", ("10.255.255.3", 5432))]
+    monkeypatch.setattr(v.socket, "getaddrinfo", lambda *a, **k: rotas)
+    inicio = time.monotonic()
+    assert v._sondar("ep-x", 5432, prazo_total=0.6) == "http"
+    assert time.monotonic() - inicio < 2.5  # nunca 3 rotas x timeout inteiro
+    monkeypatch.setattr(v.socket, "getaddrinfo", lambda *a, **k: (_ for _ in ()).throw(OSError("dns")))
+    assert v._sondar("ep-x", 5432) == "http"

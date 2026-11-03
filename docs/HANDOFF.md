@@ -7,7 +7,7 @@ bloco de estado mais novo divergir de um texto mais antigo, vale o bloco.
 | Documento | Para quê |
 |---|---|
 | [`../README.md`](../README.md) | porta de entrada e atalhos |
-| [`../AGENTS.md`](../AGENTS.md) | regras para qualquer agente aqui (CEO técnico, **autonomia total** com três travas); `../CLAUDE.md` só importa este |
+| [`../AGENTS.md`](../AGENTS.md) | regras para qualquer agente aqui (CEO técnico, **autonomia total** com três travas). `../CLAUDE.md` é cópia gerada dele (`scripts/sync_agents.py`) |
 | [`OPERACAO.md`](OPERACAO.md) | onde está, variáveis, segredos, cofre, roles, como testar, pendências |
 | [`WAKE.md`](WAKE.md) | por que o worker dorme no Render free e como o Actions o acorda |
 | [`COFRE-IDEIAS.md`](COFRE-IDEIAS.md) | as seis ideias do cofre (todas feitas), decisões e alternativas avaliadas |
@@ -17,7 +17,7 @@ bloco de estado mais novo divergir de um texto mais antigo, vale o bloco.
 > **🧭 Estado em 03/nov/2026 (leia primeiro):**
 > - **No ar:** serviço `standby` no Render (plano free, dorme após ~15 min), banco no Neon (projeto `Next`, `aws-sa-east-1`). `record_only`: nada vai ao WhatsApp. URL `https://genius-next-serverless.onrender.com` (o subdomínio não muda, `TRAPS` #12).
 > - **Wake:** `wake.yml` a cada 20 min consulta o Neon com a role `wake_ro` e só chama `POST /v1/control/wake` quando há trabalho vencido. Verificado de ponta a ponta em 03/nov (`WAKE.md`).
-> - **Cofre de segredos:** schema `standby_vault` no Neon; valores cifrados fora do banco (AES-256-GCM, nome como AAD). Acesso só por funções que registram cada leitura; histórico e log são somente de inserção; backup cifrado com `export`; chave em duas partes (`aead2`) para `RENDER_API_KEY` e `NEON_API_KEY`; prazo de rotação de 90 dias (`due`). `python scripts/vault.py` (`OPERACAO.md`, "Cofre"); funciona do sandbox por HTTPS do Neon (`TRAPS` #16). Entrada: `STANDBY_VAULT_URL` e `STANDBY_VAULT_KEY` no ambiente da sessão.
+> - **Cofre de segredos:** schema `standby_vault` no Neon; valores cifrados fora do banco (AES-256-GCM, nome como AAD). Acesso só por funções que registram cada leitura; histórico e log são somente de inserção; backup cifrado com `export`; chave em duas partes (`aead2`) para `RENDER_API_KEY` e `NEON_API_KEY`; prazo de rotação de 90 dias (`due`). `python scripts/vault.py` (`OPERACAO.md`, "Cofre"); funciona do sandbox por HTTPS do Neon (`TRAPS` #16), ~0,65 s por consulta depois da 1ª (`TRAPS` #17). Entrada: `STANDBY_VAULT_URL` e `STANDBY_VAULT_KEY` no ambiente da sessão.
 > - **Roles do Neon criadas por SQL**, nunca pela API (`TRAPS` #8): `wake_ro` (lê 5 tabelas) e `vault_rw` (só executa as funções do cofre).
 > - **Autonomia total (ordem do chairman, 03/nov):** o agente decide, executa e **faz o merge dos PRs do Standby** sem pedir licença; só três travas: mensagem a paciente/cliente (inclui ligar o `live`), destruir o que não tem backup verificado, e dinheiro (`AGENTS.md`).
 > - **Rename:** o app era `genius-next-serverless`, agora é Standby (repositório `geniu5-ai/standby`, serviço `standby`). O Genius Dev (VPS 003, DBOS) e os docs do Next citam o nome antigo; o GitHub mantém o redirecionamento.

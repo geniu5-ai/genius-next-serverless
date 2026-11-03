@@ -136,6 +136,12 @@ sandbox: `list`, `get`, `put`, `expire`, `due`, `history`, `log`, `run` e o erro
 Prova de ponta a ponta: a `RENDER_API_KEY` (`aead2`) decifrada do cofre foi aceita pela API do
 Render (HTTP 200).
 
+**Velocidade** (medido do sandbox em 03/nov): a 1ª consulta da sessão leva ~3 s (teste da porta, no
+máximo 2,5 s no total) e as seguintes **~0,65 s**, porque a decisão `pg`/`http` fica guardada por 30
+min em `$TMPDIR/standby-vault-transporte-*`. Chave de duas partes e `run` não custam a mais
+(`run RENDER_API_KEY -- curl ...` até a resposta da API: ~0,9 s). Para acesso instantâneo, exporte
+`STANDBY_VAULT_TRANSPORT=http` no ambiente da sessão.
+
 Atenção: com `STANDBY_VAULT_KEY2` definida, **todo `put` grava `aead2`**, inclusive um valor que
 não é segredo. Para gravar em `aead1`, rode o `put` sem essa variável (`unset STANDBY_VAULT_KEY2`).
 
@@ -211,7 +217,7 @@ Sem rede e sem banco (modelo falso, guardrails e agente): `pytest -q tests`.
 
 ## O que já deu errado e por quê
 
-Ver [`TRAPS.md`](TRAPS.md): dezesseis armadilhas, cada uma com sintoma, causa, correção e regra. As mais
+Ver [`TRAPS.md`](TRAPS.md): dezessete armadilhas, cada uma com sintoma, causa, correção e regra. As mais
 úteis para quem opera: #6 (segredo de URL colado errado), #8 e #9 (roles do Neon), #10 (não apagar
 arquivo de segredo antes do chairman copiar).
 

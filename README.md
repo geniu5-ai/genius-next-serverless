@@ -9,7 +9,7 @@ cair. Hoje roda em `record_only`: a resposta é gravada no `outbox` e **nada vai
 | Documento | Para quê |
 |---|---|
 | [`docs/OPERACAO.md`](docs/OPERACAO.md) | Onde está, variáveis, credenciais, como testar, histórico de problemas, pendências |
-| [`AGENTS.md`](AGENTS.md) | Regras para qualquer agente aqui: CEO técnico, **autonomia total** com três travas, crew, segredos, git (o `CLAUDE.md` importa este arquivo) |
+| [`AGENTS.md`](AGENTS.md) | Regras para qualquer agente aqui: CEO técnico, **autonomia total** com três travas, crew, segredos, git (o `CLAUDE.md` é cópia gerada dele) |
 | [`docs/GENIUS-DEV-AGENTS.md`](docs/GENIUS-DEV-AGENTS.md) | Cópia de referência das regras da casa do Genius Dev (fonte: VPS 003) |
 | [`docs/HANDOFF.md`](docs/HANDOFF.md) | Estado atual e por onde começar uma sessão fria (mesmo padrão do Next) |
 | [`docs/COFRE-IDEIAS.md`](docs/COFRE-IDEIAS.md) | As seis ideias do cofre, decisões e alternativas avaliadas |
