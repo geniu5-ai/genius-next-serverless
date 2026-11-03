@@ -69,8 +69,8 @@ vazamento do banco não expõem nada. A chave de 256 bits sai da chave mestra po
 **nome do segredo entra como dado autenticado (AAD)**: alterar o texto cifrado, ou trocar o
 conteúdo de duas linhas de lugar, faz a decifragem falhar (testado). Formatos em `value_enc`:
 base64(`0x01` + nonce de 12 bytes + texto cifrado + tag), `fmt = 'aead1'` (uma parte da chave); e
-`0x02`, `fmt = 'aead2'`, derivado de **duas partes** da chave. Hoje `RENDER_API_KEY` e `NEON_API_KEY`
-estão em `aead2`; as demais, em `aead1`. Ideias, decisões e alternativas: [`COFRE-IDEIAS.md`](COFRE-IDEIAS.md).
+`0x02`, `fmt = 'aead2'`, derivado de **duas partes** da chave. Hoje `RENDER_API_KEY`, `NEON_API_KEY`,
+`R2_ACCESS_KEY_ID` e `R2_SECRET_ACCESS_KEY` estão em `aead2`; as demais, em `aead1`. Ideias, decisões e alternativas: [`COFRE-IDEIAS.md`](COFRE-IDEIAS.md).
 
 **Acesso só por funções** (`scripts/vault_schema.sql`, `SECURITY DEFINER`, `search_path` fixo,
 `EXECUTE` revogado de `PUBLIC`). A role `vault_rw` **não tem acesso às tabelas**; só executa:
@@ -98,6 +98,8 @@ mas não no log). O rótulo de quem chamou vem de `application_name` (`vault.py:
 | `OMNIROUTE_API_KEY`, `OPENAI_API_KEY` | modelo usado pelo agente |
 | `EVOLUTION_URL`, `EVOLUTION_API_KEY` | Evolution (somente leitura em `record_only`) |
 | `LOGFIRE_READ_TOKEN` | ler os logs do projeto `genius` |
+| `R2_ENDPOINT`, `R2_BUCKET` | onde fica o backup do repositório (`aead1`) |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | gravar no R2 (`aead2`: precisam das duas partes da chave, porque a chave dá escrita e apagar no bucket inteiro) |
 
 Origem: `tokens.local` da VPS 002, **só lido, nunca alterado**. O que **não** foi copiado, de
 propósito: as outras ~110 entradas (token do GitHub, Cloudflare, Supabase `service_role`, login do
