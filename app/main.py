@@ -558,6 +558,46 @@ async def control_conversation(request: Request) -> dict[str, str]:
     return {"status": result.outcome, "automation_state": result.automation_state}
 
 
+@app.post("/v1/control/wake")
+async def control_wake(request: Request) -> dict[str, Any]:
+    """Acorda o servico (a propria chamada ja o acorda) e devolve o que esta esperando.
+
+    Chamado pelo Actions (``scripts/wake_check.py``) quando ha trabalho vencido. Ao subir,
+    o Procrastinate retoma sozinho jobs vencidos, travados e o ultimo tick de cada relogio;
+    aqui so se confirma que o worker esta de pe e se mostra a fila. Somente leitura.
+    """
+    from app import wake
+
+    runtime_settings = get_settings()
+    secret_setting = runtime_settings.CONTROL_HMAC_SECRET
+    if secret_setting is None:
+        raise HTTPException(status_code=503, detail="Service unavailable")
+    body = await _read_limited_body(
+        request, max_bytes=runtime_settings.WEBHOOK_MAX_BODY_BYTES
+    )
+    if not _control_request_is_authorized(
+        body,
+        request.headers.get("X-Control-Timestamp"),
+        request.headers.get("X-Control-Signature-256"),
+        secret_setting.get_secret_value(),
+        max_age_seconds=runtime_settings.CONTROL_HMAC_MAX_AGE_SECONDS,
+    ):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        estado = (
+            await asyncio.to_thread(
+                wake.consultar,
+                runtime_settings.DATABASE_URL,
+                tenants=wake.parse_tenants(runtime_settings.MANAGER_PENDENTES_TENANTS),
+            )
+        ).as_dict()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Service unavailable") from exc
+    logging.getLogger("app").info("wake: %s", estado)
+    return {"status": "awake", **estado}
+
+
 @app.post("/v1/control/tenant_registry")
 async def control_tenant_registry(request: Request) -> dict[str, str | bool]:
     """Authenticated self-serve link of a provider instance to a tenant.
