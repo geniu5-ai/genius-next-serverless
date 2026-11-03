@@ -182,6 +182,7 @@ def _default_reply_rules(tenant_id: str, *, allow_tools: bool) -> list[str]:
 # calado), entao o guia do atendimento normal ("responda a estas") descreveria
 # campos que nao existem e esconderia os que existem.
 _FOLLOWUP_INPUT_GUIDE: dict[str, str] = {
+    "data_atual": "data de hoje e dia da semana (fuso de Fortaleza); só cite campanha, mês ou prazo que ainda vale hoje, nunca um que já passou",
     "follow_up_attempt": "número desta tentativa; define o papel da mensagem (veja a regra da tentativa)",
     "history": "a conversa até agora, com o que o cliente, a atendente e a equipe já disseram",
     "mensagens_ja_enviadas": "o que você já enviou a esta pessoa: não repita nem parafraseie",
@@ -189,6 +190,7 @@ _FOLLOWUP_INPUT_GUIDE: dict[str, str] = {
     "fechos_ja_usados": "como as mensagens anteriores terminaram: não termine de modo parecido",
     "angulo_da_vez": "ângulo de persuasão desta mensagem; adapte ao que a pessoa disse",
     "apos_encaminhamento_equipe": "true quando esta mensagem nasceu de um encaminhamento à equipe que expirou sem resposta dela: a pessoa espera a equipe — não repita pergunta já respondida, não prometa prazo novo, não pressione por agenda nem campanha",
+    "apos_objecao_do_paciente": "true quando a pessoa já apontou um obstáculo (distância, preço, tempo) ou adiou em algum ponto da conversa: acolha, não rebata, não compare com outras pessoas e não pressione",
     "client": "perfil conhecido do cliente (nome, status, última intenção)",
     "informacoes_da_empresa": "fatos oficiais da empresa; única fonte para valor, campanha, preparo e diferencial",
 }

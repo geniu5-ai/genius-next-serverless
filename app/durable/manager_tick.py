@@ -168,11 +168,22 @@ def dispatch_due_agenda_items() -> int:
 def run_tick() -> dict[str, int]:
     """Um tick: devolucao da equipe e agenda, cada uma isolada da falha da outra."""
     resultado = {"crew_liberadas": 0, "agenda_disparados": 0, "falhas": 0}
+    liberadas: list[dict[str, Any]] = []
     try:
-        resultado["crew_liberadas"] = len(release_stale_crew_in())
+        liberadas = release_stale_crew_in()
+        resultado["crew_liberadas"] = len(liberadas)
     except Exception:
         resultado["falhas"] += 1
         logger.exception("manager_tick: devolucao da equipe falhou")
+    try:
+        # 03/nov/2026: fala escrita durante a marcacao foi descartada; ao devolver a conversa,
+        # o Manager de pendencias a aborda na hora em vez de esperar a varredura de 30 min.
+        from app.durable.pendentes import abordar_liberados
+
+        abordar_liberados(liberadas)
+    except Exception:
+        resultado["falhas"] += 1
+        logger.exception("manager_tick: abordagem dos devolvidos falhou")
     try:
         resultado["agenda_disparados"] = dispatch_due_agenda_items()
     except Exception:
