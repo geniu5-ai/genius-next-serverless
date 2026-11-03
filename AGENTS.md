@@ -79,6 +79,7 @@ Acesso: `tailscale ssh root@<host>` (auth key no ambiente da sessão).
   `--force-with-lease=<branch>:<sha>` (`TRAPS` #11).
 - **Backup do repo:** `scripts/backup_repo.sh --subir`; varra o histórico atrás de segredos antes de
   levar qualquer cópia para fora (`TRAPS` #14).
+- **Paridade com o Next.** Tudo o que o Genius Next muda (código, testes, regras, armadilhas) é espelhado aqui **na mesma entrega** (ordem do chairman, 03/nov/2026): abra o PR deste repositório junto com o do Next e cite um no outro. Prompt, catálogo e ambiente são dados do Next, não código: registre só a nota genérica (`docs/TRAPS.md` #18 e #19). O repositório é **público**: nada de prompt, preço ou conversa de cliente (`TRAPS` #20). Estado e medição: `docs/OPERACAO.md`, "Paridade com o Next".
 - **Cliente antes de tudo.** O Standby é o plano B do atendimento real: nada vai ao WhatsApp
   (`record_only`) sem a promoção da trava 1. Na dúvida entre mandar uma resposta incerta e segurar,
   segure; nunca invente valor, horário ou promessa.

@@ -281,6 +281,36 @@ testado) e confere o objeto no R2 por download e hash.
 O repositório continua no GitHub; o R2 é a segunda cópia. Repita o backup depois de mudanças
 grandes. O cofre tem o seu próprio backup cifrado (`vault.py export`), que **não** está no bundle.
 
+## Paridade com o Next
+
+Regra (chairman, 03/nov/2026): o que muda no Next muda aqui, na mesma entrega. Este repositório é
+público: espelhar código, testes sem dado real, regras e armadilhas genéricas; nunca prompt, catálogo,
+preço ou conversa de cliente (`TRAPS` #20).
+
+**Medição de 03/nov/2026** (`app/` do Genius-Next `main` na VPS 002 × este repositório): 119 arquivos
+de um lado, 111 do outro, **106 idênticos**.
+
+| Situação | Arquivos |
+|---|---|
+| Diferentes | `app/main.py`, `app/observability.py`, `app/status/audit.py`, `app/webapp/router.py` |
+| Só no Next | `app/curator/*` (documentação e `supabase_to_lessons.py`), `app/embed/main.py` (sidecar de embedding) |
+| Só no Standby | `app/wake.py` |
+| Idênticos e sensíveis a mudança | `app/durable/followup.py`, `app/status/rules.py`, `app/reply/llm.py`, `app/reply/prompt_profiles.py` |
+
+**Conferir de novo** (no clone do Standby; a lista do Next vem de `git ls-files app` na VPS 002):
+
+```bash
+git ls-files app | grep -v pycache | xargs sha1sum | awk '{print $2" "$1}' | sort > standby.sha
+# no Next (como ubuntu, em ~/Genius-Next): o mesmo comando, salvo em next.sha; depois comparar os dois arquivos
+```
+
+**Diferenças deliberadas:** `app/wake.py` (acorda o worker no Render free); `app/embed/` e `app/curator/`
+não existem aqui (sem sidecar de embedding, `OPERACAO.md` "Pendente" item 2). As quatro divergências
+de código acima ainda não foram analisadas: investigar uma a uma antes de dizer "paridade".
+
+**Dados e ambiente** não são código (`TRAPS` #18 e #19): prompts e catálogo chegam por dump, e o env
+do Next não vale aqui.
+
 ## Pendente antes de atender cliente real
 
 1. Trocar as chaves que circularam em 02/nov (`HMAC_SECRET`, senha do Neon, OmniRoute, Evolution, `LOGFIRE_TOKEN`). Também as geradas para o wake (`wake_ro`, `CONTROL_HMAC_SECRET`) apareceram numa conversa e valem ser rotacionadas.
@@ -289,7 +319,7 @@ grandes. O cofre tem o seu próprio backup cifrado (`vault.py export`), que **n�
 4. Failover automático: o workflow que vigia a VPS 002 e liga o `live` só quando ela cair ainda **não existe** (ver `WAKE.md`, "Próximos passos").
 5. Investigar o job `conversation_turn` em `failed` de 02/nov 05:49 UTC (ainda não analisado).
 6. Rotinas do Next que mencionam o nome antigo (`geniu5-ai/genius-next-serverless`) fora deste repositório: `scripts/core/dbos/github_monitor.py` no Genius-Dev (VPS 003) e `docs/HANDOFF.md` / `docs/TRAPS.md` no Genius-Next (VPS 002). Atualizar junto com o rename do repositório.
-7. Validar a paridade do Standby com o Next, módulo a módulo (nada disto foi comparado ainda):
+7. Validar a paridade do Standby com o Next, módulo a módulo. **Primeira comparação por arquivo feita em 03/nov** (seção "Paridade com o Next"); falta comparar o comportamento de:
    `app/status/` (classificação de status igual à do Next), lessons (`app/agent/lesson*.py`, busca e
    extração), embeds (hoje sem sidecar de embedding no Render), o juiz (avaliação/guardrails de
    qualidade, `deepeval`) e os demais módulos de `app/`. Fazer por comparação com o repositório

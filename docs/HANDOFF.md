@@ -14,6 +14,12 @@ bloco de estado mais novo divergir de um texto mais antigo, vale o bloco.
 | [`TRAPS.md`](TRAPS.md) | armadilhas já encontradas (sintoma, causa, correção, regra) |
 | [`GENIUS-DEV-AGENTS.md`](GENIUS-DEV-AGENTS.md) | cópia das regras da casa do Genius Dev (fonte: VPS 003) |
 
+> **🧭 Paridade com o Next (03/nov/2026, tarde):**
+> - **Regra (ordem do chairman):** tudo o que muda no Next é espelhado aqui na mesma entrega (`AGENTS.md`). O repositório é público: só código, testes sem dado real, regras e armadilhas genéricas (`TRAPS` #20).
+> - **Código:** hoje **106 dos 119 arquivos** de `app/` do Next são idênticos aos daqui. Diferem `app/main.py`, `app/observability.py`, `app/status/audit.py` e `app/webapp/router.py`; só no Next: `app/curator/*` e `app/embed/main.py`; só aqui: `app/wake.py`. Lista e comando de conferência em `OPERACAO.md`, "Paridade com o Next".
+> - **Correção em preparo no Next (follow-up):** `app/durable/followup.py`, `app/status/rules.py`, `app/reply/llm.py` e `app/reply/prompt_profiles.py` são **idênticos** aqui; quando o patch do Next for aprovado, ele entra neste repositório sem adaptação, em PR próprio, antes de o PR do Next ser mesclado. O Next passou a ter regra de parada de follow-up por código (objeção, despedida, teto por contato) porque prompt não basta.
+> - **Dados e ambiente não vêm do código:** prompt e catálogo do Next foram corrigidos em 03/nov; promover este app exige dump posterior (`TRAPS` #18). O env do Next não serve aqui: o agente dele passou a usar um roteador local (`TRAPS` #19).
+
 > **🧭 Estado em 03/nov/2026 (leia primeiro):**
 > - **No ar:** serviço `standby` no Render (plano free, dorme após ~15 min), banco no Neon (projeto `Next`, `aws-sa-east-1`). `record_only`: nada vai ao WhatsApp. URL `https://genius-next-serverless.onrender.com` (o subdomínio não muda, `TRAPS` #12).
 > - **Wake:** `wake.yml` a cada 20 min consulta o Neon com a role `wake_ro` e só chama `POST /v1/control/wake` quando há trabalho vencido. Verificado de ponta a ponta em 03/nov (`WAKE.md`).
