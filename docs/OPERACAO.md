@@ -253,6 +253,18 @@ scripts/backup_repo.sh --subir            # idem e sobe ao R2 (com as variáveis
 scripts/backup_repo.sh --so-subir ARQ     # sobe um bundle já existente
 ```
 
+**Do sandbox do Claude Code** (sem VPS): as quatro variáveis do R2 saem do cofre (as duas chaves de
+escrita são `aead2`, então a sessão precisa de `STANDBY_VAULT_KEY2`):
+
+```bash
+python scripts/vault.py run R2_ENDPOINT R2_BUCKET R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY -- \
+  ./scripts/backup_repo.sh --subir
+```
+
+Verificado em 03/nov/2026: `Genius-Standby/standby-20261103T155104Z-2987d3b.bundle` (30 commits, depois
+do merge do PR #8), sha256 `b0e1ff35…5e7427`, conferido por download. A cópia anterior
+(`…T145957Z-41afa5e`, 24 commits) continua na pasta; apague as antigas quando quiser, uma a uma.
+
 O script completa o histórico se o clone for raso, verifica o bundle, **clona o bundle numa pasta
 de teste e roda `git fsck`** antes de subir, **nunca sobrescreve** (nome existente → código 4,
 testado) e confere o objeto no R2 por download e hash.
