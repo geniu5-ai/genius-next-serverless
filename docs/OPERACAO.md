@@ -70,3 +70,18 @@ Tudo deve estar `record_only` / `recorded`. Nunca use número real de WhatsApp c
 1. Trocar as chaves que circularam em 02/nov (`HMAC_SECRET`, senha do Neon, OmniRoute, Evolution, `LOGFIRE_TOKEN`).
 2. Embeddings: a busca de lições e o status audit chamam um sidecar de embedding local que não existe no Render (não derruba o turno, só não tem esse contexto).
 3. Plano pago (o free dorme), `DELIVERY_MODE=live` + `DELIVERY_ALLOWLIST`, `HANDOFF_AUTO_RELEASE_TENANTS` com o tenant, e cadastro pelo runbook de ativação do Next (`docs/runbooks/RUNBOOK-ATIVACAO-TENANT.md`).
+
+## Wake do worker (Actions)
+
+O Procrastinate roda dentro do serviço web: no plano free ele dorme com o Render (15 min sem tráfego de entrada) e leva os relógios junto. Ao acordar, os jobs `todo` vencidos rodam todos, o `reenfileira_travados` devolve à fila o que ficou `doing`, e cada relógio recupera só o **último** tick perdido (`periodic_defaults.max_delay` = 3 h). Falta só alguém acordar o processo.
+
+`.github/workflows/wake.yml` (a cada 20 min, minutos 7/27/47) roda `scripts/wake_check.py`: consulta o Neon com um usuário **somente leitura** (`app/wake.py`: job vencido, job travado, cliente sem resposta) e, só se houver trabalho, chama `POST /v1/control/wake` assinado (mesma assinatura de `/v1/control`, segredo `CONTROL_HMAC_SECRET`). Sem trabalho, o serviço continua dormindo. A regra de quem abordar continua só em `app/durable/pendentes.py`; a contagem do wake é grossa de propósito (falso positivo custa um despertar).
+
+| Onde | Nome | O quê |
+|---|---|---|
+| Segredo do GitHub | `WAKE_DATABASE_URL` | URL do Neon com role somente leitura |
+| Segredo do GitHub | `CONTROL_HMAC_SECRET` | o mesmo valor definido no Render |
+| Variável do Render | `CONTROL_HMAC_SECRET` | habilita `/v1/control/wake` (sem ele responde 503) |
+| Variável do GitHub (opcional) | `WAKE_TENANTS` | tenants separados por vírgula; vazio = todos |
+
+Limites: o agendamento do Actions é *best effort* (atrasa, às vezes perde). Serve para follow-ups de 30 min a 48 h; não para relógio de minuto em minuto. Teste manual: *Actions → Wake do worker → Run workflow* com `force`, ou `python scripts/wake_check.py --check-only` (só mede).

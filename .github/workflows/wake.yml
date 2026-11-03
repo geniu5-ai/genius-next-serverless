@@ -1,0 +1,47 @@
+name: Wake do worker
+
+# O Procrastinate roda dentro do servico web; no plano free do Render ele dorme apos ~15 min sem
+# trafego e leva os relogios junto. Este job pergunta ao Neon (usuario SO LEITURA) se ha trabalho
+# vencido (job `todo` vencido, job `doing` travado, cliente sem resposta) e, so entao, chama
+# POST /v1/control/wake assinado. Nada vencido: o servico continua dormindo.
+# Ao subir, o Procrastinate retoma sozinho jobs vencidos e o ULTIMO tick de cada relogio
+# (periodic_defaults.max_delay = 3 h). Agendamento do Actions e best effort: atraso de alguns
+# minutos (as vezes mais) e esperado; as esperas de follow-up de 24/48 h toleram isso.
+#
+# Segredos do repositorio: WAKE_DATABASE_URL (role somente leitura), CONTROL_HMAC_SECRET.
+# Variavel opcional: WAKE_TENANTS (lista separada por virgula; vazio = todos).
+on:
+  schedule:
+    - cron: "7,27,47 * * * *"   # a cada 20 min, fora da hora cheia (alta carga do Actions)
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Acordar mesmo sem trabalho vencido (teste)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wake
+  cancel-in-progress: false
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      WAKE_URL: https://genius-next-serverless.onrender.com
+      WAKE_DATABASE_URL: ${{ secrets.WAKE_DATABASE_URL }}
+      CONTROL_HMAC_SECRET: ${{ secrets.CONTROL_HMAC_SECRET }}
+      WAKE_TENANTS: ${{ vars.WAKE_TENANTS }}
+      WAKE_FORCE: ${{ inputs.force && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "psycopg[binary]>=3.1"
+      - name: Mede e, se preciso, acorda
+        run: python scripts/wake_check.py
