@@ -73,7 +73,8 @@ caminhos oficiais acima.
   de uma sessão fria em `docs/HANDOFF.md`; operação em `docs/OPERACAO.md`; wake em `docs/WAKE.md`.
   Mesmo padrão do Genius Next.
 - **Segredos nunca no repositório, em doc, em log ou em chat.** Cofre cifrado no Neon: `python scripts/vault.py
-  list|get|put|run|log|export` (precisa de `STANDBY_VAULT_URL` e `STANDBY_VAULT_KEY` no ambiente; detalhes
+  list|get|put|run|log|export|due` (precisa de `STANDBY_VAULT_URL` e `STANDBY_VAULT_KEY`; entradas `aead2` também de `STANDBY_VAULT_KEY2`, que
+  fica fora do ambiente; detalhes
   em `docs/OPERACAO.md`, "Cofre"). Prefira `vault.py run NOME -- comando` a imprimir o valor. Colar valor em conversa obriga a rotacioná-lo.
 - **Git:** desenvolva na branch designada da sessão, abra PR em rascunho e acompanhe CI e revisões.
 - **`tokens.local` das VPS: só leitura.** Copiar chave dele para o cofre é permitido; alterá-lo, nunca.

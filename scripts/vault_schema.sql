@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS standby_vault.secrets (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE standby_vault.secrets ALTER COLUMN fmt SET DEFAULT 'aead1';
+ALTER TABLE standby_vault.secrets ADD COLUMN IF NOT EXISTS rotate_by date;
 
 CREATE TABLE IF NOT EXISTS standby_vault.secret_versions (
   id        bigserial PRIMARY KEY,
@@ -75,10 +76,11 @@ BEGIN
   RETURN QUERY SELECT s.value_enc, s.fmt FROM standby_vault.secrets s WHERE s.name = p_name;
 END $$;
 
-CREATE OR REPLACE FUNCTION standby_vault.vault_list()
-RETURNS TABLE (name text, fmt text, source text, updated_at timestamptz)
+DROP FUNCTION IF EXISTS standby_vault.vault_list();
+CREATE FUNCTION standby_vault.vault_list()
+RETURNS TABLE (name text, fmt text, source text, updated_at timestamptz, rotate_by date)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-  SELECT s.name, s.fmt, s.source, s.updated_at FROM standby_vault.secrets s ORDER BY s.name
+  SELECT s.name, s.fmt, s.source, s.updated_at, s.rotate_by FROM standby_vault.secrets s ORDER BY s.name
 $$;
 
 CREATE OR REPLACE FUNCTION standby_vault.vault_put(
@@ -93,7 +95,7 @@ BEGIN
     VALUES (p_name, p_value_enc, p_fmt, p_source)
     ON CONFLICT (name) DO UPDATE
       SET value_enc = EXCLUDED.value_enc, fmt = EXCLUDED.fmt,
-          source = EXCLUDED.source, updated_at = now();
+          source = EXCLUDED.source, updated_at = now(), rotate_by = NULL;
   INSERT INTO standby_vault.secret_versions (name, action, value_enc, fmt, source, actor)
     VALUES (p_name, p_action, p_value_enc, p_fmt, p_source, standby_vault.vault_actor());
   INSERT INTO standby_vault.access_log (name, action, actor)
@@ -161,6 +163,39 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
   FROM standby_vault.access_log l ORDER BY l.id DESC LIMIT least(greatest(p_limit, 1), 1000)
 $$;
 
+-- Prazo de rotacao: valor novo (put) zera o prazo; "expire" define; "due" lista o que pede atencao.
+CREATE OR REPLACE FUNCTION standby_vault.vault_set_rotate_by(p_name text, p_days integer)
+RETURNS date
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE novo date;
+BEGIN
+  IF p_days IS NULL OR p_days < 1 OR p_days > 3650 THEN
+    RAISE EXCEPTION 'dias invalidos: use de 1 a 3650';
+  END IF;
+  novo := current_date + p_days;
+  UPDATE standby_vault.secrets SET rotate_by = novo WHERE name = p_name;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION '% nao existe', p_name;
+  END IF;
+  INSERT INTO standby_vault.access_log (name, action, actor)
+    VALUES (p_name, 'expire', standby_vault.vault_actor());
+  RETURN novo;
+END $$;
+
+CREATE OR REPLACE FUNCTION standby_vault.vault_due(p_days integer DEFAULT 14)
+RETURNS TABLE (name text, rotate_by date, updated_at timestamptz, motivo text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+  SELECT t.name, t.rotate_by, t.updated_at, t.motivo FROM (
+    SELECT s.name, s.rotate_by, s.updated_at,
+      CASE
+        WHEN s.rotate_by IS NOT NULL AND s.rotate_by <= current_date THEN 'vencido'
+        WHEN s.rotate_by IS NOT NULL AND s.rotate_by <= current_date + greatest(p_days, 0) THEN 'vence em breve'
+        WHEN s.rotate_by IS NULL AND s.updated_at < now() - interval '90 days' THEN 'sem prazo e com mais de 90 dias'
+      END AS motivo
+    FROM standby_vault.secrets s) t
+  WHERE t.motivo IS NOT NULL ORDER BY t.rotate_by NULLS LAST, t.name
+$$;
+
 -- Historico inicial das linhas que ja existiam.
 INSERT INTO standby_vault.secret_versions (name, action, value_enc, fmt, source, actor)
   SELECT s.name, 'migrate', s.value_enc, s.fmt, s.source, 'vault_schema.sql'
@@ -182,7 +217,8 @@ BEGIN
       standby_vault.vault_get(text), standby_vault.vault_list(),
       standby_vault.vault_put(text, text, text, text, text), standby_vault.vault_delete(text),
       standby_vault.vault_history(text), standby_vault.vault_restore(text, bigint),
-      standby_vault.vault_export(), standby_vault.vault_access_log(integer)
+      standby_vault.vault_export(), standby_vault.vault_access_log(integer),
+      standby_vault.vault_set_rotate_by(text, integer), standby_vault.vault_due(integer)
       TO vault_rw;
   END IF;
 END $$;

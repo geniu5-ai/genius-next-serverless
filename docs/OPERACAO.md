@@ -67,8 +67,10 @@ Schema `standby_vault` no banco do Standby. Cada valor é **cifrado fora do banc
 autenticada) antes de ser enviado: o servidor nunca vê valor nem chave, então log de statement ou
 vazamento do banco não expõem nada. A chave de 256 bits sai da chave mestra por HKDF-SHA256 e o
 **nome do segredo entra como dado autenticado (AAD)**: alterar o texto cifrado, ou trocar o
-conteúdo de duas linhas de lugar, faz a decifragem falhar (testado). Formato em `value_enc`:
-base64(`0x01` + nonce de 12 bytes + texto cifrado + tag), com `fmt = 'aead1'`.
+conteúdo de duas linhas de lugar, faz a decifragem falhar (testado). Formatos em `value_enc`:
+base64(`0x01` + nonce de 12 bytes + texto cifrado + tag), `fmt = 'aead1'` (uma parte da chave); e
+`0x02`, `fmt = 'aead2'`, derivado de **duas partes** da chave. Hoje `RENDER_API_KEY` e `NEON_API_KEY`
+estão em `aead2`; as demais, em `aead1`. Ideias, decisões e alternativas: [`COFRE-IDEIAS.md`](COFRE-IDEIAS.md).
 
 **Acesso só por funções** (`scripts/vault_schema.sql`, `SECURITY DEFINER`, `search_path` fixo,
 `EXECUTE` revogado de `PUBLIC`). A role `vault_rw` **não tem acesso às tabelas**; só executa:
@@ -82,6 +84,7 @@ base64(`0x01` + nonce de 12 bytes + texto cifrado + tag), com `fmt = 'aead1'`.
 | `vault_history(nome)` / `vault_restore(nome, id)` | versões (quem, quando, ação) e volta a uma delas |
 | `vault_export()` | todo o texto cifrado, para backup (registra o acesso) |
 | `vault_access_log(n)` | últimos `n` acessos: quem leu o quê e quando |
+| `vault_set_rotate_by(nome, dias)` / `vault_due(dias)` | prazo de rotação e lista do que vence |
 
 `secret_versions` e `access_log` são **somente de inserção**: gatilhos recusam `UPDATE`, `DELETE` e
 `TRUNCATE`, inclusive do dono do banco (que pode desligar o gatilho, e isso deixa rastro no catálogo,
@@ -106,7 +109,8 @@ Instagram, OCI, Slack, chaves administrativas da OpenAI e tokens de instâncias 
 | Variável do ambiente | Para quê |
 |---|---|
 | `STANDBY_VAULT_URL` | URL do Neon da role `vault_rw`, **endpoint direto** (sem `-pooler`, `TRAPS` #9) |
-| `STANDBY_VAULT_KEY` | chave mestra: 64 hexadecimais aleatórios; sem ela a tabela é ilegível |
+| `STANDBY_VAULT_KEY` | chave mestra (parte 1): 64 hexadecimais aleatórios; sem ela a tabela é ilegível |
+| `STANDBY_VAULT_KEY2` | **opcional**, parte 2. Com ela o `put` grava `aead2`, que só abre com as **duas** partes. Guarde-a **fora** do ambiente; defina só quando a sessão precisar de uma entrada `aead2` |
 
 ```bash
 python scripts/vault.py list                          # nomes, formato, origem e data (nunca valores)
@@ -115,8 +119,10 @@ printf '%s' "$VALOR" | python scripts/vault.py put NOME origem
 python scripts/vault.py run RENDER_API_KEY -- ./meu_script.sh   # segredo só no ambiente do filho
 python scripts/vault.py delete NOME                   # recuperável: history NOME / restore NOME ID
 python scripts/vault.py log 20                        # últimos 20 acessos
+python scripts/vault.py expire NOME 90                # prazo de rotação: hoje + 90 dias
+python scripts/vault.py due                           # vencido, vence em 14 dias ou sem prazo há 90+ dias
 python scripts/vault.py export backup.json            # só texto cifrado + sha256 (0600); import volta
-NOVA=<nova chave> python scripts/vault.py rotate      # recifra tudo com a chave nova, numa transação
+NOVA=<chave> [NOVA2=<parte 2>] python scripts/vault.py rotate   # recifra tudo, numa transação
 ```
 
 Requer `cryptography` e `psycopg` (`pip install cryptography "psycopg[binary]"`). Instalar o
@@ -191,7 +197,7 @@ Sem rede e sem banco (modelo falso, guardrails e agente): `pytest -q tests`.
 
 ## O que já deu errado e por quê
 
-Ver [`TRAPS.md`](TRAPS.md): doze armadilhas, cada uma com sintoma, causa, correção e regra. As mais
+Ver [`TRAPS.md`](TRAPS.md): treze armadilhas, cada uma com sintoma, causa, correção e regra. As mais
 úteis para quem opera: #6 (segredo de URL colado errado), #8 e #9 (roles do Neon), #10 (não apagar
 arquivo de segredo antes do chairman copiar).
 

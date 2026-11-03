@@ -12,6 +12,7 @@ cair. Hoje roda em `record_only`: a resposta é gravada no `outbox` e **nada vai
 | [`CLAUDE.md`](CLAUDE.md) | Regras para o Claude Code neste repositório (CEO técnico, autonomia, human-gate, como chamar a crew) |
 | [`docs/GENIUS-DEV-AGENTS.md`](docs/GENIUS-DEV-AGENTS.md) | Cópia de referência das regras da casa do Genius Dev (fonte: VPS 003) |
 | [`docs/HANDOFF.md`](docs/HANDOFF.md) | Estado atual e por onde começar uma sessão fria (mesmo padrão do Next) |
+| [`docs/COFRE-IDEIAS.md`](docs/COFRE-IDEIAS.md) | As seis ideias do cofre, decisões e alternativas avaliadas |
 | [`docs/TRAPS.md`](docs/TRAPS.md) | Armadilhas já encontradas: sintoma, causa, correção e regra |
 | [`docs/WAKE.md`](docs/WAKE.md) | Por que o worker dorme no Render free, como o Actions o acorda, decisões e alternativas avaliadas |
 

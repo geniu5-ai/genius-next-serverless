@@ -175,3 +175,74 @@ def test_comandos_novos_sem_ambiente_saem_com_codigo_2(monkeypatch):
         assert codigo == 2, argv
     assert v.main(["restore", "A", "x"]) == 2  # ID nao numerico
     assert v.main(["run", "A"]) == 2  # sem --
+
+
+# --------------------------------------------------------------------------- #
+# Chave em duas partes (aead2) e prazo de rotacao
+# --------------------------------------------------------------------------- #
+PARTE2 = "ef" * 32
+
+
+def test_duas_partes_ida_e_volta_e_formato():
+    v = _vault()
+    assert v.formato_de(None) == "aead1" and v.formato_de(PARTE2) == "aead2"
+    blob = v.cifrar(MESTRA, "A", "segredo", PARTE2)
+    assert base64.b64decode(blob)[:1] == b"\x02"
+    assert v.decifrar(MESTRA, "A", blob, PARTE2) == "segredo"
+
+
+def test_aead2_exige_as_duas_partes_e_a_parte_certa():
+    v = _vault()
+    blob = v.cifrar(MESTRA, "A", "segredo", PARTE2)
+    with pytest.raises(v.CofreError, match="duas partes"):
+        v.decifrar(MESTRA, "A", blob)  # sem a segunda parte
+    with pytest.raises(v.CofreError, match="nao decifra"):
+        v.decifrar(MESTRA, "A", blob, "11" * 32)  # segunda parte errada
+    with pytest.raises(v.CofreError, match="nao decifra"):
+        v.decifrar("cd" * 32, "A", blob, PARTE2)  # primeira parte errada
+
+
+def test_so_uma_parte_nao_abre_aead2_e_a_ordem_das_partes_importa():
+    v = _vault()
+    blob = v.cifrar(MESTRA, "A", "segredo", PARTE2)
+    with pytest.raises(v.CofreError, match="nao decifra"):
+        v.decifrar(PARTE2, "A", blob, MESTRA)  # partes trocadas de lugar
+
+
+def test_aead1_continua_legivel_quando_ha_segunda_parte_no_ambiente():
+    v = _vault()
+    blob = v.cifrar(MESTRA, "A", "antigo")  # uma parte so
+    assert v.decifrar(MESTRA, "A", blob, PARTE2) == "antigo"
+
+
+def test_aead2_tambem_amarra_o_nome_e_a_parte2_curta_e_recusada():
+    v = _vault()
+    blob = v.cifrar(MESTRA, "A", "x", PARTE2)
+    with pytest.raises(v.CofreError, match="nao decifra"):
+        v.decifrar(MESTRA, "B", blob, PARTE2)
+    with pytest.raises(v.CofreError, match="KEY2 curta"):
+        v.cifrar(MESTRA, "A", "x", "curta")
+
+
+def test_backup_com_aead2_pula_o_que_nao_da_para_verificar():
+    v = _vault()
+    itens = [
+        {"name": "UM", "value_enc": v.cifrar(MESTRA, "UM", "a"), "fmt": "aead1", "source": "t", "updated_at": "x"},
+        {"name": "DOIS", "value_enc": v.cifrar(MESTRA, "DOIS", "b", PARTE2), "fmt": "aead2", "source": "t", "updated_at": "x"},
+    ]
+    doc = v.montar_export(itens)
+    assert len(v.validar_export(doc, MESTRA)) == 2  # sem parte2: pula o aead2, valida o aead1
+    assert len(v.validar_export(doc, MESTRA, PARTE2)) == 2  # com as duas: valida tudo
+    with pytest.raises(v.CofreError, match="nao decifra"):
+        v.validar_export(doc, MESTRA, "11" * 32)  # parte2 errada e detectada
+
+
+def test_comandos_de_prazo_validam_entrada_e_ambiente(monkeypatch):
+    v = _vault()
+    for nome in ("STANDBY_VAULT_URL", "DATABASE_URL", "STANDBY_VAULT_KEY"):
+        monkeypatch.delenv(nome, raising=False)
+    assert v.main(["expire", "A", "x"]) == 2  # dias nao numerico
+    assert v.main(["expire", "A;B", "30"]) == 2  # nome invalido
+    assert v.main(["expire", "A", "30"]) == 2  # sem ambiente
+    assert v.main(["due"]) == 2 and v.main(["due", "7"]) == 2
+    assert v.main(["due", "abc"]) == 2  # cai no uso

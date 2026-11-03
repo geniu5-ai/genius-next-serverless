@@ -111,3 +111,13 @@ que a corrige. As do Next que também valem aqui estão citadas pelo número del
 **Correção:** documentar. Para `standby.onrender.com` é preciso criar um serviço novo, copiar as variáveis e apagar o antigo (não feito).
 
 **Regra:** nome de serviço e URL são coisas diferentes; `monitor.yml`, `wake.yml` e `scripts/testar_webhook.sh` usam a URL real.
+
+### 13. `CREATE OR REPLACE FUNCTION` não muda o tipo de retorno
+**Data:** 03/nov/2026 | **Impacto:** ao acrescentar `rotate_by` ao retorno de `vault_list()`, reaplicar o esquema falharia ("cannot change return type of existing function").
+
+**Causa:** no Postgres, `CREATE OR REPLACE` só troca o corpo; mudar as colunas de retorno exige `DROP FUNCTION` antes. Depois do `DROP`, o `GRANT EXECUTE` some junto.
+
+**Correção:** `DROP FUNCTION IF EXISTS standby_vault.vault_list();` antes do `CREATE FUNCTION`, e o bloco de `GRANT` no fim do script (idempotente) reaplica a permissão.
+
+**Regra:** esquema que muda assinatura de função tem o `GRANT` no mesmo script, depois dos `CREATE`, para que reaplicar o arquivo inteiro sempre deixe as permissões certas.
+
