@@ -127,6 +127,18 @@ python scripts/vault.py export backup.json            # só texto cifrado + sha2
 NOVA=<chave> [NOVA2=<parte 2>] python scripts/vault.py rotate   # recifra tudo, numa transação
 ```
 
+**Transporte (automático):** o sandbox do Claude Code **não abre a porta 5432** do Neon (o `psycopg`
+dá *timeout*), mas abre HTTPS. O `vault.py` testa a porta (4 s) e, se ela não abrir, usa o **SQL
+sobre HTTPS do Neon** (`POST https://<host>/sql`, cabeçalho `Neon-Connection-String`): o mesmo
+cofre, as mesmas funções, cada chamada numa transação. VPS e máquinas com a porta aberta usam o
+Postgres direto. Para forçar: `STANDBY_VAULT_TRANSPORT=pg|http`. Verificado em 03/nov a partir do
+sandbox: `list`, `get`, `put`, `expire`, `due`, `history`, `log`, `run` e o erro legível do banco.
+Prova de ponta a ponta: a `RENDER_API_KEY` (`aead2`) decifrada do cofre foi aceita pela API do
+Render (HTTP 200).
+
+Atenção: com `STANDBY_VAULT_KEY2` definida, **todo `put` grava `aead2`**, inclusive um valor que
+não é segredo. Para gravar em `aead1`, rode o `put` sem essa variável (`unset STANDBY_VAULT_KEY2`).
+
 Requer `cryptography` e `psycopg` (`pip install cryptography "psycopg[binary]"`). Instalar o
 esquema ou atualizá-lo: `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/vault_schema.sql` (dono
 do banco; idempotente). Backup (`export`) fica fora do banco: gerenciador de senhas ou Drive.
@@ -199,7 +211,7 @@ Sem rede e sem banco (modelo falso, guardrails e agente): `pytest -q tests`.
 
 ## O que já deu errado e por quê
 
-Ver [`TRAPS.md`](TRAPS.md): quinze armadilhas, cada uma com sintoma, causa, correção e regra. As mais
+Ver [`TRAPS.md`](TRAPS.md): dezesseis armadilhas, cada uma com sintoma, causa, correção e regra. As mais
 úteis para quem opera: #6 (segredo de URL colado errado), #8 e #9 (roles do Neon), #10 (não apagar
 arquivo de segredo antes do chairman copiar).
 

@@ -21,6 +21,8 @@ Ambiente:
                        que so decifra com as DUAS partes: guarde esta fora do ambiente e do banco
   STANDBY_VAULT_URL    URL do Neon da role ``vault_rw`` (alternativa: DATABASE_URL do dono)
   STANDBY_VAULT_ACTOR  rotulo de quem chama, gravado no log (padrao: usuario@maquina)
+  STANDBY_VAULT_TRANSPORT  auto (padrao) | pg | http. 'auto' usa o Postgres direto se a porta abrir
+                       e, se nao abrir (sandbox do Claude Code), o SQL sobre HTTPS do Neon
 
 Cifra: AES-256-GCM (autenticada). A chave de 256 bits sai da chave mestra por HKDF-SHA256 e o nome
 do segredo entra como dado autenticado associado (AAD): alterar o texto cifrado, ou trocar o
@@ -47,8 +49,11 @@ import re
 import socket
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
@@ -198,10 +203,127 @@ def _ator() -> str:
     return ("vault.py:" + ator)[:63]
 
 
-def _conectar():
-    import psycopg
+_TRANSPORTE: str | None = None
 
-    return psycopg.connect(_url(), connect_timeout=30, application_name=_ator())
+
+def _transporte() -> str:
+    """``pg`` (Postgres direto) ou ``http`` (SQL sobre HTTPS do Neon, para quem nao abre a porta)."""
+    global _TRANSPORTE
+    if _TRANSPORTE:
+        return _TRANSPORTE
+    modo = os.environ.get("STANDBY_VAULT_TRANSPORT", "auto").strip().lower()
+    if modo in ("pg", "http"):
+        _TRANSPORTE = modo
+    else:
+        partes = urlsplit(_url())
+        try:
+            socket.create_connection((partes.hostname, partes.port or 5432), timeout=4).close()
+            _TRANSPORTE = "pg"
+        except OSError:
+            _TRANSPORTE = "http"
+    return _TRANSPORTE
+
+
+def _numerar(sql: str) -> str:
+    """``%s`` (psycopg) -> ``$1``, ``$2``... (SQL sobre HTTP)."""
+    n = 0
+
+    def troca(_):
+        nonlocal n
+        n += 1
+        return f"${n}"
+
+    return re.sub(r"%s", troca, sql)
+
+
+class _Resultado:
+    """Mesma interface minima do cursor do psycopg (fetchall / fetchone)."""
+
+    def __init__(self, linhas: list):
+        self._linhas = [tuple(linha) for linha in linhas]
+
+    def fetchall(self) -> list:
+        return self._linhas
+
+    def fetchone(self):
+        return self._linhas[0] if self._linhas else None
+
+
+class _Pg:
+    def __enter__(self):
+        import psycopg
+
+        self.conn = psycopg.connect(_url(), connect_timeout=30, application_name=_ator())
+        self.conn.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        return self.conn.__exit__(*exc)
+
+    def execute(self, sql: str, params: tuple = ()):
+        return self.conn.execute(sql, params)
+
+    def batch(self, itens: list[tuple[str, tuple]]):
+        ultimo = None
+        for sql, params in itens:
+            ultimo = self.conn.execute(sql, params)
+        return ultimo
+
+
+class _Http:
+    """SQL sobre HTTPS do Neon: o mesmo cofre, sem abrir a porta 5432.
+
+    Cada chamada vai num lote (uma transacao): primeiro ``set_config('application_name', ...)``, que
+    e o rotulo que o log do cofre registra, depois as consultas. Valores voltam como texto.
+    """
+
+    def __enter__(self):
+        self.url = _url()
+        self.host = urlsplit(self.url).hostname
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def _enviar(self, consultas: list[tuple[str, list]]) -> list[dict]:
+        corpo = {"queries": [{"query": q, "params": p} for q, p in consultas]}
+        req = urllib.request.Request(
+            f"https://{self.host}/sql",
+            data=json.dumps(corpo).encode(),
+            method="POST",
+            headers={
+                "Neon-Connection-String": self.url,
+                "Neon-Raw-Text-Output": "true",
+                "Neon-Array-Mode": "true",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return json.loads(resp.read())["results"]
+        except urllib.error.HTTPError as exc:
+            try:
+                msg = str(json.loads(exc.read()).get("message", ""))
+            except (ValueError, OSError):
+                msg = ""
+            raise CofreError(f"banco recusou (HTTP {exc.code}): {msg[:160]}") from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise CofreError(f"sem acesso ao Neon por HTTPS: {type(exc).__name__}") from exc
+
+    def batch(self, itens: list[tuple[str, tuple]]):
+        consultas = [("select set_config('application_name', $1, true)", [_ator()])]
+        consultas += [
+            (_numerar(sql), [None if p is None else str(p) for p in params]) for sql, params in itens
+        ]
+        resultados = self._enviar(consultas)
+        return _Resultado(resultados[-1].get("rows", []))
+
+    def execute(self, sql: str, params: tuple = ()):
+        return self.batch([(sql, params)])
+
+
+def _conectar():
+    return _Http() if _transporte() == "http" else _Pg()
 
 
 def _buscar(nome: str) -> tuple[str, str] | None:
@@ -258,6 +380,7 @@ def apagar(nome: str) -> int:
         achou = conn.execute(
             "select standby_vault.vault_delete(%s)", (validar_nome(nome),)
         ).fetchone()[0]
+    achou = achou in (True, "t", "true")
     print(f"apagado: {nome}" if achou else f"{nome}: nao existia", file=sys.stderr)
     return 0
 
@@ -382,14 +505,17 @@ def rotacionar(nova: str, nova2: str | None = None) -> int:
         linhas = conn.execute(
             "select name, value_enc, fmt, source from standby_vault.vault_export()"
         ).fetchall()
+        escritas = []
         for nome, blob, fmt, origem in linhas:
             if fmt not in FORMATOS:
                 raise CofreError(f"{nome}: formato '{fmt}' antigo; migre antes de rotacionar")
-            conn.execute(
+            novo = cifrar(nova, nome, decifrar(atual, nome, blob, atual2), nova2)
+            escritas.append((
                 "select standby_vault.vault_put(%s, %s, %s, %s)",
-                (nome, cifrar(nova, nome, decifrar(atual, nome, blob, atual2), nova2),
-                 formato_de(nova2), origem),
-            )
+                (nome, novo, formato_de(nova2), origem),
+            ))
+        if escritas:
+            conn.batch(escritas)  # tudo ou nada
     print(f"rotacionadas {len(linhas)} entradas; troque STANDBY_VAULT_KEY"
           + (" e STANDBY_VAULT_KEY2" if nova2 else ""), file=sys.stderr)
     return 0

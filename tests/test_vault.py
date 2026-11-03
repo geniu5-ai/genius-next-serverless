@@ -246,3 +246,125 @@ def test_comandos_de_prazo_validam_entrada_e_ambiente(monkeypatch):
     assert v.main(["expire", "A", "30"]) == 2  # sem ambiente
     assert v.main(["due"]) == 2 and v.main(["due", "7"]) == 2
     assert v.main(["due", "abc"]) == 2  # cai no uso
+
+
+# --------------------------------------------------------------------------- #
+# Transporte HTTP (SQL sobre HTTPS do Neon)
+# --------------------------------------------------------------------------- #
+URL_FALSA = "postgresql://vault_rw:senha@ep-teste.c-2.sa-east-1.aws.neon.tech/neondb?sslmode=require"
+
+
+class _RespostaFalsa:
+    def __init__(self, corpo: dict):
+        self._corpo = corpo
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        import json
+
+        return json.dumps(self._corpo).encode()
+
+
+def _http_com_resposta(monkeypatch, v, resultados):
+    import json
+
+    enviados = []
+
+    def falso_urlopen(req, timeout=0):
+        enviados.append({"url": req.full_url, "headers": dict(req.header_items()),
+                         "corpo": json.loads(req.data)})
+        return _RespostaFalsa({"results": resultados})
+
+    monkeypatch.setattr(v.urllib.request, "urlopen", falso_urlopen)
+    monkeypatch.setenv("STANDBY_VAULT_URL", URL_FALSA)
+    monkeypatch.setenv("STANDBY_VAULT_ACTOR", "teste")
+    return enviados
+
+
+def test_numerar_troca_porcentagem_s_por_cifrao_n():
+    v = _vault()
+    assert v._numerar("select f(%s, %s, %s)") == "select f($1, $2, $3)"
+    assert v._numerar("select 1") == "select 1"
+
+
+def test_http_manda_set_config_primeiro_params_como_texto_e_devolve_a_ultima_consulta(monkeypatch):
+    v = _vault()
+    enviados = _http_com_resposta(
+        monkeypatch, v, [{"rows": [["t"]]}, {"rows": [["NEON_ORG_ID", "aead1"], ["X", "aead2"]]}]
+    )
+    with v._Http() as conn:
+        res = conn.execute("select * from standby_vault.vault_history(%s) where id > %s", ("A", 5))
+    assert res.fetchall() == [("NEON_ORG_ID", "aead1"), ("X", "aead2")]
+    assert res.fetchone() == ("NEON_ORG_ID", "aead1")
+    req = enviados[0]
+    assert req["url"] == "https://ep-teste.c-2.sa-east-1.aws.neon.tech/sql"
+    consultas = req["corpo"]["queries"]
+    assert consultas[0]["query"].startswith("select set_config('application_name'")
+    assert consultas[0]["params"] == ["vault.py:teste"]  # o rotulo do log
+    assert consultas[1]["query"].endswith("where id > $2")
+    assert consultas[1]["params"] == ["A", "5"]  # tudo como texto
+    cab = {k.lower(): val for k, val in req["headers"].items()}
+    assert cab["neon-connection-string"] == URL_FALSA
+    assert cab["neon-raw-text-output"] == "true" and cab["neon-array-mode"] == "true"
+
+
+def test_http_lote_manda_tudo_numa_so_chamada(monkeypatch):
+    v = _vault()
+    enviados = _http_com_resposta(monkeypatch, v, [{"rows": []}, {"rows": []}, {"rows": []}])
+    with v._Http() as conn:
+        conn.batch([("select f(%s)", ("a",)), ("select f(%s)", ("b",))])
+    assert len(enviados) == 1 and len(enviados[0]["corpo"]["queries"]) == 3
+
+
+def test_http_erro_do_banco_vira_cofre_error_sem_vazar_a_url(monkeypatch):
+    import io
+    import json
+    import urllib.error
+
+    v = _vault()
+    monkeypatch.setenv("STANDBY_VAULT_URL", URL_FALSA)
+
+    def urlopen_erro(req, timeout=0):
+        raise urllib.error.HTTPError(
+            req.full_url, 400, "Bad", {}, io.BytesIO(json.dumps({"message": "versao 9 de A nao existe"}).encode())
+        )
+
+    monkeypatch.setattr(v.urllib.request, "urlopen", urlopen_erro)
+    with pytest.raises(v.CofreError) as exc, v._Http() as conn:
+        conn.execute("select 1")
+    assert "versao 9 de A nao existe" in str(exc.value) and "senha" not in str(exc.value)
+
+
+def test_transporte_auto_escolhe_http_quando_a_porta_nao_abre(monkeypatch):
+    v = _vault()
+    monkeypatch.setenv("STANDBY_VAULT_URL", URL_FALSA)
+    monkeypatch.delenv("STANDBY_VAULT_TRANSPORT", raising=False)
+
+    def sem_porta(*a, **k):
+        raise OSError("bloqueada")
+
+    monkeypatch.setattr(v.socket, "create_connection", sem_porta)
+    monkeypatch.setattr(v, "_TRANSPORTE", None)
+    assert v._transporte() == "http" and isinstance(v._conectar(), v._Http)
+
+
+def test_transporte_auto_usa_pg_quando_a_porta_abre_e_o_ambiente_manda(monkeypatch):
+    v = _vault()
+    monkeypatch.setenv("STANDBY_VAULT_URL", URL_FALSA)
+
+    class Aberta:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(v.socket, "create_connection", lambda *a, **k: Aberta())
+    monkeypatch.delenv("STANDBY_VAULT_TRANSPORT", raising=False)
+    monkeypatch.setattr(v, "_TRANSPORTE", None)
+    assert v._transporte() == "pg" and isinstance(v._conectar(), v._Pg)
+    monkeypatch.setenv("STANDBY_VAULT_TRANSPORT", "http")  # o ambiente manda
+    monkeypatch.setattr(v, "_TRANSPORTE", None)
+    assert v._transporte() == "http"
