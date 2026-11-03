@@ -24,6 +24,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest",
+    "cryptography>=43",  # scripts/vault.py (cofre); nao e dependencia do app
     "ruff==0.15.21",
 ]
 

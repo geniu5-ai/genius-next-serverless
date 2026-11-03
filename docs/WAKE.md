@@ -50,7 +50,7 @@ no app.
 ```
 GitHub Actions (minutos 7, 27, 47)            Render (free)                  Neon
         │                                          │                           │
-        │── scripts/wake_check.py ── SELECT (role wake_ro, só leitura) ───────▶│
+        │── scripts/wake_check.py ── SELECT (role wake_ro) ───────▶│
         │       há trabalho vencido?                                           │
         │── não: termina, o serviço continua dormindo                          │
         │── sim: POST /v1/control/wake (HMAC) ─────▶ acorda (~60 s)            │
