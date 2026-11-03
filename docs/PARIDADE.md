@@ -28,7 +28,7 @@ documentos (README, HANDOFF, OPERACAO) apontam para cá em vez de repetir.
 |---|---|---|
 | **Código de `app/`**: status (`app/status/`), follow-up (`app/durable/followup.py`), guardrails (`app/reply/guardrails.py`, `price_guard.py`, `app/security/`), Manager, estado e fatos (`app/state/`), agente (`app/reply/`, `app/agent/`) | git | **PR espelho** aberto na mesma entrega e mesclado junto. Enquanto o arquivo for idêntico, o mesmo patch vale nos dois |
 | **Testes** sem dado real (`tests/test_followup_*.py`, `test_guardrails.py` e helpers) | git | cópia no PR espelho. Testes que leem o banco de produção ou o prompt de um tenant **não** vão |
-| **Prompts** de tenant (`reply_normal`, `persuasao`, `followup`, `manager_triage`) | Postgres do Next (`tenant_prompt_profiles`) | **Sincronização em tempo real do banco Next → Neon. AINDA NÃO CONSTRUÍDA.** Até lá, só por dump **posterior** à última mudança, conferindo as versões ativas (`TRAPS` #18 do Standby). Nunca por arquivo do repositório |
+| **Prompts** de tenant (`reply_normal`, `persuasao`, `followup`, `manager_triage`) | Postgres do Next (`tenant_prompt_profiles`) | **Sincronização em tempo real do banco Next → Neon. CONSTRUÍDA E TESTADA, AINDA NÃO LIGADA (`docs/specs/SYNC-PG-NEON.md`; worker só no Next, `app/sync/pg_neon.py`).** Até lá, só por dump **posterior** à última mudança, conferindo as versões ativas (`TRAPS` #18 do Standby). Nunca por arquivo do repositório |
 | **Catálogo** (`knowledge`, campanhas, preços) | Postgres do Next | idem prompts |
 | **Regras de negócio** (leis do cliente, parada de follow-up por objeção e despedida, teto por contato, status) | código, não prompt | são código de `app/`: seguem o PR espelho |
 | **Docs** de regra, doutrina e armadilhas **genéricas** | cada repositório tem os seus `docs/HANDOFF.md` e `docs/TRAPS.md` (numerações próprias, não são cópia um do outro) | entra no Standby como nota genérica depois de revisar dado de cliente. Hoje o único doc idêntico é **este** |
@@ -56,8 +56,8 @@ no Render.
 
 ```
 código    Next (PR) ──espelho──▶ Standby (PR)  ── mesclados juntos ──▶ Render redeploya
-prompts   Postgres do Next ──sync em tempo real (a construir)──▶ Neon       [nunca por arquivo]
-catálogo  Postgres do Next ──sync em tempo real (a construir)──▶ Neon       [nunca por arquivo]
+prompts   Postgres do Next ──worker de sync (construído, não ligado)──▶ Neon       [nunca por arquivo]
+catálogo  Postgres do Next ──worker de sync (construído, não ligado)──▶ Neon       [nunca por arquivo]
 env       cada lado tem o seu                                                [nunca copiado]
 ```
 
@@ -100,6 +100,8 @@ lições (busca e extração), embeddings, o juiz de qualidade e os demais módu
 | 03/nov/2026 | Manager: a rota densa tenta uma vez o modelo do turno quando o de raciocínio falha (`app/reply/tools/reasoning.py`); ao devolver a conversa da equipe ao bot, aborda na hora quem ficou sem resposta (`app/durable/pendentes.py`, `app/durable/manager_tick.py`, só tenants de `MANAGER_PENDENTES_TENANTS`) | `Genius-Next#74` | testes de `test_pendentes.py`, `test_manager_agenda.py` e `test_manager_agent.py` **não** foram copiados (o Standby não os tem) |
 
 | 03/nov/2026 | **Campanhas como módulo dinâmico:** tabela `genius_next.campaigns` (`vale_de`/`vale_ate`), `app/context/campaigns.py`, bloco `campanhas_vigentes` no contexto do atendimento e do follow-up, catálogo ignora `promo:*` (`app/context/knowledge.py`, `app/reply/llm.py`, `app/reply/agent.py`, `app/durable/followup.py`, `migrations/091_campaigns.sql`) | Genius-Next#74 | `tests/test_campanhas.py`: no Standby 8 testes ficam pulados (dependem de helpers e de docs que só existem no Next). Runbook, seed e prompts v24/v8/v8 ficam só no Next |
+
+| 03/nov/2026 | **Sync de configuração Postgres → Neon** (`app/sync/pg_neon.py`, `migrations/092_sync_outbox.sql`, `deploy/systemd/genius-pg-neon-sync.service`) | Genius-Next#74 | **Só no Next** (roda na 002; infra separada). No Neon entram apenas a role `sync_rw` e o esquema igual (incl. `091_campaigns.sql`); `REVOKE` de escrita do app do Standby nessas tabelas e `setval` das sequences antes de promover (`TRAPS.md` #100 do Next) |
 
 Linha nova a cada espelhamento. O detalhe da armadilha fica no `TRAPS.md` do lado em que ela apareceu.
 
