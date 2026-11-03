@@ -197,7 +197,7 @@ Sem rede e sem banco (modelo falso, guardrails e agente): `pytest -q tests`.
 
 ## O que já deu errado e por quê
 
-Ver [`TRAPS.md`](TRAPS.md): treze armadilhas, cada uma com sintoma, causa, correção e regra. As mais
+Ver [`TRAPS.md`](TRAPS.md): quatorze armadilhas, cada uma com sintoma, causa, correção e regra. As mais
 úteis para quem opera: #6 (segredo de URL colado errado), #8 e #9 (roles do Neon), #10 (não apagar
 arquivo de segredo antes do chairman copiar).
 
@@ -220,6 +220,35 @@ que consulta o Neon com a role `wake_ro`, de leitura e, só se houver trabalho v
 Teste manual: *Actions → Wake do worker → Run workflow* na `main`, com `force`. Resultado
 esperado: job verde e `{"status": "awake", "jobs_vencidos": 0, ...}`. Verificado em 03/nov/2026.
 
+## Backup do repositório (R2)
+
+Cópia completa do repositório (todas as refs e todo o histórico) num `git bundle`, guardada fora do
+GitHub. Primeira cópia feita em 03/nov/2026.
+
+| Item | Valor |
+|---|---|
+| Onde | bucket `genius` do Cloudflare R2, pasta `backups/standby/repo/` (as outras pastas de `backups/` são `genius-specific/` e `genius_dev/`; nada nelas foi tocado) |
+| Nome | `standby-<data UTC>-<sha7 da main>.bundle` + `.sha256` |
+| Primeira cópia | `standby-20261103T040736Z-41afa5e.bundle`, 462 250 bytes, sha256 `2eafc4fb…47f42`, 22 commits, conferida por download |
+| Credenciais | `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` do `tokens.local` da VPS 002 (**só lidas**, nunca copiadas para o repositório nem para o cofre) |
+| Cifrado? | **Não.** O bundle tem todo o histórico (inclui a chave do `CPFHUB_API_KEY`, `TRAPS` #14). Só em bucket privado |
+
+```bash
+scripts/backup_repo.sh                    # cria, verifica e testa a restauração; salva ./standby-*.bundle
+scripts/backup_repo.sh --subir            # idem e sobe ao R2 (com as variáveis R2_* no ambiente)
+scripts/backup_repo.sh --so-subir ARQ     # sobe um bundle já existente
+```
+
+O script completa o histórico se o clone for raso, verifica o bundle, **clona o bundle numa pasta
+de teste e roda `git fsck`** antes de subir, **nunca sobrescreve** (nome existente → código 4,
+testado) e confere o objeto no R2 por download e hash.
+
+**Restaurar:** baixar o `.bundle` e o `.sha256`, conferir com `sha256sum -c`, e
+`git clone standby-....bundle standby` (todas as branches ficam em `origin/*`).
+
+O repositório continua no GitHub; o R2 é a segunda cópia. Repita o backup depois de mudanças
+grandes. O cofre tem o seu próprio backup cifrado (`vault.py export`), que **não** está no bundle.
+
 ## Pendente antes de atender cliente real
 
 1. Trocar as chaves que circularam em 02/nov (`HMAC_SECRET`, senha do Neon, OmniRoute, Evolution, `LOGFIRE_TOKEN`). Também as geradas para o wake (`wake_ro`, `CONTROL_HMAC_SECRET`) apareceram numa conversa e valem ser rotacionadas.
@@ -237,3 +266,7 @@ esperado: job verde e `{"status": "awake", "jobs_vencidos": 0, ...}`. Verificado
    o cofre novo.
 9. Criar o ambiente da sessão com `STANDBY_VAULT_URL` e `STANDBY_VAULT_KEY` (os dois valores estão em
    `vault-env.local`, arquivo local ignorado pelo git; copiar e só então apagar) e testar `python scripts/vault.py list` numa sessão nova.
+10. **`CPFHUB_API_KEY` fixa no código** (`app/tools/procuracao.py`, como valor padrão de `os.getenv`),
+    vinda da cópia do Next: está no histórico do Standby e vai em todo clone e backup. Rotacionar a
+    chave no CPFHub, trocar o padrão por vazio e definir `CPFHUB_API_KEY` no Render se a ferramenta
+    for usada (`TRAPS` #14). Conferir o mesmo no repositório do Next.

@@ -121,3 +121,12 @@ que a corrige. As do Next que também valem aqui estão citadas pelo número del
 
 **Regra:** esquema que muda assinatura de função tem o `GRANT` no mesmo script, depois dos `CREATE`, para que reaplicar o arquivo inteiro sempre deixe as permissões certas.
 
+### 14. Chave de API fixa como valor padrão de `os.getenv`
+**Data:** 03/nov/2026 | **Impacto:** `app/tools/procuracao.py` traz `CPFHUB_API_KEY = os.getenv("CPFHUB_API_KEY", "<chave real>")`. A chave está no código e em todo o histórico do Standby (desde `ca3ada2`, a cópia do Next), logo em cada clone, em cada PR e no backup do R2. Achada pela varredura de segredos feita antes do backup; nenhum uso indevido conhecido.
+
+**Causa:** a ferramenta foi copiada do Next com a chave como padrão para "funcionar sem configurar".
+
+**Correção (pendente):** rotacionar a chave no CPFHub, trocar o padrão por `""` e definir `CPFHUB_API_KEY` no Render se a ferramenta `procuracao` for usada. Limpar o histórico não adianta (a chave já foi copiada): a rotação é o que resolve.
+
+**Regra:** valor real nunca é o segundo argumento de `os.getenv`. Antes de qualquer backup ou cópia para fora, varrer **todo o histórico** (`git log --all -p | grep -E 'sk-|npg_|ghp_|postgres(ql)?://[^:]+:[^@]+@|[0-9a-f]{64}'`) e tratar o que aparecer. O mesmo código existe no Genius Next: conferir lá.
+
