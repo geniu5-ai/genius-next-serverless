@@ -81,7 +81,8 @@ Acesso: `tailscale ssh root@<host>` (auth key no ambiente da sessão).
   `--force-with-lease=<branch>:<sha>` (`TRAPS` #11).
 - **Backup do repo:** `scripts/backup_repo.sh --subir`; varra o histórico atrás de segredos antes de
   levar qualquer cópia para fora (`TRAPS` #14).
-- **Paridade com o Next.** Tudo o que o Genius Next muda (código, testes, regras, armadilhas) é espelhado aqui **na mesma entrega** (ordem do chairman, 03/nov/2026): abra o PR deste repositório junto com o do Next e cite um no outro. Prompt, catálogo e ambiente são dados do Next, não código: registre só a nota genérica (`docs/TRAPS.md` #18 e #19). O repositório é **público**: nada de prompt, preço ou conversa de cliente (`TRAPS` #20). Estado e medição: `docs/OPERACAO.md`, "Paridade com o Next".
+- **Paridade com o Next** (fonte única: `docs/PARIDADE.md`). **Igual nos dois: prompts, regras e alguns docs; a infraestrutura é separada** (Next: VPS, systemd, cloudflared; Standby: Render, Neon, Actions, cofre). Código de `app/` que muda no Next é espelhado aqui na mesma entrega (PR espelho; cite um no outro); prompts e catálogo são dados do Postgres e chegam por **sincronização do banco Next → Neon** (a construir), nunca por arquivo; o env não se copia. O repositório é **público**: nada de prompt, preço ou conversa de cliente (`docs/TRAPS.md` #18 a #20).
+- **O Standby só existe no container do agente e no GitHub.** Nunca clone ou copie este repositório para uma VPS (teste rodando aqui, no ambiente local). Tudo fica sempre no GitHub: trabalho não empurrado não existe.
 - **Cliente antes de tudo.** O Standby é o plano B do atendimento real: nada vai ao WhatsApp
   (`record_only`) sem a promoção da trava 1. Na dúvida entre mandar uma resposta incerta e segurar,
   segure; nunca invente valor, horário ou promessa.

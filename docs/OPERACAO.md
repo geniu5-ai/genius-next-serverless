@@ -3,7 +3,8 @@
 App de **contingência** do Genius Next (FastAPI + fila Procrastinate) rodando no **Render** com
 banco no **Neon**. Estado em 03/nov/2026. O app de produção continua sendo o
 `geniu5-ai/Genius-Next` na VPS 002; a base de conhecimento (armadilhas, runbooks) vive lá:
-`docs/TRAPS.md` (#78 a #82 são deste app) e `docs/HANDOFF.md`.
+`docs/TRAPS.md` (#78 a #82 são deste app) e `docs/HANDOFF.md`, ambos do **Genius-Next** (privado; os do
+Standby estão em [`TRAPS.md`](TRAPS.md) e [`HANDOFF.md`](HANDOFF.md)).
 
 Papel: ficar pronto para assumir se o agente principal cair. Por isso roda em `record_only` e só
 deve ir a `live` num failover deliberado (ver "Pendente antes de atender cliente real").
@@ -283,51 +284,22 @@ grandes. O cofre tem o seu próprio backup cifrado (`vault.py export`), que **n�
 
 ## Paridade com o Next
 
-Regra (chairman, 03/nov/2026): o que muda no Next muda aqui, na mesma entrega. Este repositório é
-público: espelhar código, testes sem dado real, regras e armadilhas genéricas; nunca prompt, catálogo,
-preço ou conversa de cliente (`TRAPS` #20).
-
-**Medição de 03/nov/2026** (`app/` do Genius-Next `main` na VPS 002 × este repositório): 119 arquivos
-de um lado, 111 do outro, **106 idênticos**.
-
-| Situação | Arquivos |
-|---|---|
-| Diferentes | `app/main.py`, `app/observability.py`, `app/status/audit.py`, `app/webapp/router.py` |
-| Só no Next | `app/curator/*` (documentação e `supabase_to_lessons.py`), `app/embed/main.py` (sidecar de embedding) |
-| Só no Standby | `app/wake.py` |
-| Idênticos e sensíveis a mudança | `app/durable/followup.py`, `app/status/rules.py`, `app/reply/llm.py`, `app/reply/prompt_profiles.py` (o patch do follow-up de 03/nov entrou nos quatro, ver abaixo) |
-
-**Conferir de novo** (no clone do Standby; a lista do Next vem de `git ls-files app` na VPS 002):
-
-```bash
-git ls-files app | grep -v pycache | xargs sha1sum | awk '{print $2" "$1}' | sort > standby.sha
-# no Next (como ubuntu, em ~/Genius-Next): o mesmo comando, salvo em next.sha; depois comparar os dois arquivos
-```
-
-**Espelhado do Next em 03/nov/2026** (PR do Next: `geniu5-ai/Genius-Next#74`):
-
-- `app/status/rules.py`, `app/durable/followup.py`, `app/durable/flow.py`, `app/reply/llm.py`, `app/settings.py`: objeção (distância, custo, tempo) e despedida pausam o ciclo de follow-up; teto de mensagens por contato em 24 h (3) e 7 dias (5, `FOLLOWUP_MAX_PER_PHONE_7D`); sem escassez obrigatória na tentativa 2; ângulos de pressão e de comparação saem depois de objeção; `data_atual` no contexto do follow-up.
-- `app/reply/tools/reasoning.py`: a rota densa tenta uma vez o modelo do turno quando o modelo de raciocínio falha (HTTP != 200).
-- `app/durable/pendentes.py`, `app/durable/manager_tick.py`: ao devolver a conversa da equipe ao bot, o Manager aborda na hora quem ficou com a última fala sem resposta (só tenants de `MANAGER_PENDENTES_TENANTS`).
-- Testes: `tests/test_followup_objecao.py` (106) e os helpers de que ele depende (`tests/test_followup_guard.py`, `tests/followup_chain.py`, `tests/media_stub.py`), copiados do Next. Sem Postgres, 8 testes de `test_followup_guard.py` falham por senha do banco de teste (`user "test"`): são os mesmos que falham no Next sem banco. Os 106 novos passam.
-- **Não** foram copiados os testes de `test_pendentes.py`, `test_manager_agenda.py` e `test_manager_agent.py` (o Standby não os tem).
-
-**Diferenças deliberadas:** `app/wake.py` (acorda o worker no Render free); `app/embed/` e `app/curator/`
-não existem aqui (sem sidecar de embedding, `OPERACAO.md` "Pendente" item 2). As quatro divergências
-de código acima ainda não foram analisadas: investigar uma a uma antes de dizer "paridade".
-
-**Dados e ambiente** não são código (`TRAPS` #18 e #19): prompts e catálogo chegam por dump, e o env
-do Next não vale aqui.
+**Canônico: [`PARIDADE.md`](PARIDADE.md)** (o mesmo arquivo existe no Genius-Next). Lá estão a regra
+(o que muda no Next muda aqui na mesma entrega; o repositório é público, `TRAPS` #20), a matriz do que é igual e
+do que é separado, a medição por hash de `app/` com o comando para refazê-la, as diferenças deliberadas
+(`app/wake.py`, `app/embed/`, `app/curator/`) e o registro de espelhamentos (PR `Genius-Next#74`).
+Aqui não se repete nada disso. Dados e ambiente não são código: prompts e catálogo chegam por sincronização do
+banco (a construir) ou dump posterior (`TRAPS` #18), e o env do Next não vale aqui (`TRAPS` #19).
 
 ## Pendente antes de atender cliente real
 
 1. Trocar as chaves que circularam em 02/nov (`HMAC_SECRET`, senha do Neon, OmniRoute, Evolution, `LOGFIRE_TOKEN`). Também as geradas para o wake (`wake_ro`, `CONTROL_HMAC_SECRET`) apareceram numa conversa e valem ser rotacionadas.
 2. Embeddings: a busca de lições e o status audit chamam um sidecar de embedding local que não existe no Render (não derruba o turno, só não tem esse contexto).
-3. Plano pago (o free dorme), `DELIVERY_MODE=live` + `DELIVERY_ALLOWLIST`, `HANDOFF_AUTO_RELEASE_TENANTS` com o tenant, e cadastro pelo runbook de ativação do Next (`docs/runbooks/RUNBOOK-ATIVACAO-TENANT.md`).
+3. Plano pago (o free dorme), `DELIVERY_MODE=live` + `DELIVERY_ALLOWLIST`, `HANDOFF_AUTO_RELEASE_TENANTS` com o tenant, e cadastro pelo runbook de ativação do Next (`docs/runbooks/RUNBOOK-ATIVACAO-TENANT.md`, **no repositório Genius-Next**).
 4. Failover automático: o workflow que vigia a VPS 002 e liga o `live` só quando ela cair ainda **não existe** (ver `WAKE.md`, "Próximos passos").
 5. Investigar o job `conversation_turn` em `failed` de 02/nov 05:49 UTC (ainda não analisado).
 6. Rotinas do Next que mencionam o nome antigo (`geniu5-ai/genius-next-serverless`) fora deste repositório: `scripts/core/dbos/github_monitor.py` no Genius-Dev (VPS 003) e `docs/HANDOFF.md` / `docs/TRAPS.md` no Genius-Next (VPS 002). Atualizar junto com o rename do repositório.
-7. Validar a paridade do Standby com o Next, módulo a módulo. **Primeira comparação por arquivo feita em 03/nov** (seção "Paridade com o Next"); falta comparar o comportamento de:
+7. Validar a paridade do Standby com o Next, módulo a módulo. **Primeira comparação por arquivo feita em 03/nov** (`PARIDADE.md`); falta comparar o comportamento de:
    `app/status/` (classificação de status igual à do Next), lessons (`app/agent/lesson*.py`, busca e
    extração), embeds (hoje sem sidecar de embedding no Render), o juiz (avaliação/guardrails de
    qualidade, `deepeval`) e os demais módulos de `app/`. Fazer por comparação com o repositório
