@@ -149,3 +149,13 @@ que a corrige. As do Next que também valem aqui estão citadas pelo número del
 **Correção:** o Neon aceita SQL sobre HTTPS (`POST https://<host>/sql`, cabeçalho `Neon-Connection-String`), que passa pelo proxy. O `vault.py` ganhou esse transporte, escolhido sozinho quando a porta não abre. O rótulo do log vai por `set_config('application_name', ..., true)` no mesmo lote (transação).
 
 **Regra:** teste a porta (`socket.create_connection(..., timeout=4)`) antes de abrir conexão de banco numa ferramenta que roda no sandbox, e dê um caminho por HTTPS. Em modo texto cru o Neon devolve tudo como texto (`t`/`f` no booleano): normalize na borda.
+
+### 17. Cada consulta ao cofre levava 12 s: o teste da porta tentava todos os endereços
+**Data:** 03/nov/2026 | **Impacto:** com o transporte automático, todo `vault.py` no sandbox esperava ~12,8 s antes de cair no HTTPS (a consulta em si leva 0,7 s). Percebido ao medir "acessar o cofre rapidamente".
+
+**Causa:** `socket.create_connection(host, timeout=4)` tenta **cada** endereço do DNS com o timeout inteiro; com 3 rotas e a porta bloqueada, 3 x 4 s.
+
+**Correção:** `_sondar` tenta no máximo 2 rotas com prazo **total** de 2,5 s, e a decisão fica em cache por 30 min num arquivo temporário (a 1ª chamada da sessão paga ~3 s; as outras ~0,65 s). Testes cobrem o prazo total, o cache, a expiração e o cache corrompido.
+
+**Regra:** timeout de conexão é por endereço, não total. Em ferramenta que roda a cada comando, meça a latência de ponta a ponta e ponha prazo total e cache na decisão que não muda.
+

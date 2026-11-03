@@ -136,6 +136,12 @@ sandbox: `list`, `get`, `put`, `expire`, `due`, `history`, `log`, `run` e o erro
 Prova de ponta a ponta: a `RENDER_API_KEY` (`aead2`) decifrada do cofre foi aceita pela API do
 Render (HTTP 200).
 
+**Velocidade** (medido do sandbox em 03/nov): a 1ª consulta da sessão leva ~3 s (teste da porta, no
+máximo 2,5 s no total) e as seguintes **~0,65 s**, porque a decisão `pg`/`http` fica guardada por 30
+min em `$TMPDIR/standby-vault-transporte-*`. Chave de duas partes e `run` não custam a mais
+(`run RENDER_API_KEY -- curl ...` até a resposta da API: ~0,9 s). Para acesso instantâneo, exporte
+`STANDBY_VAULT_TRANSPORT=http` no ambiente da sessão.
+
 Atenção: com `STANDBY_VAULT_KEY2` definida, **todo `put` grava `aead2`**, inclusive um valor que
 não é segredo. Para gravar em `aead1`, rode o `put` sem essa variável (`unset STANDBY_VAULT_KEY2`).
 
@@ -211,7 +217,7 @@ Sem rede e sem banco (modelo falso, guardrails e agente): `pytest -q tests`.
 
 ## O que já deu errado e por quê
 
-Ver [`TRAPS.md`](TRAPS.md): dezesseis armadilhas, cada uma com sintoma, causa, correção e regra. As mais
+Ver [`TRAPS.md`](TRAPS.md): dezessete armadilhas, cada uma com sintoma, causa, correção e regra. As mais
 úteis para quem opera: #6 (segredo de URL colado errado), #8 e #9 (roles do Neon), #10 (não apagar
 arquivo de segredo antes do chairman copiar).
 
@@ -252,6 +258,18 @@ scripts/backup_repo.sh                    # cria, verifica e testa a restauraç�
 scripts/backup_repo.sh --subir            # idem e sobe ao R2 (com as variáveis R2_* no ambiente)
 scripts/backup_repo.sh --so-subir ARQ     # sobe um bundle já existente
 ```
+
+**Do sandbox do Claude Code** (sem VPS): as quatro variáveis do R2 saem do cofre (as duas chaves de
+escrita são `aead2`, então a sessão precisa de `STANDBY_VAULT_KEY2`):
+
+```bash
+python scripts/vault.py run R2_ENDPOINT R2_BUCKET R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY -- \
+  ./scripts/backup_repo.sh --subir
+```
+
+Verificado em 03/nov/2026: `Genius-Standby/standby-20261103T155104Z-2987d3b.bundle` (30 commits, depois
+do merge do PR #8), sha256 `b0e1ff35…5e7427`, conferido por download. A cópia anterior
+(`…T145957Z-41afa5e`, 24 commits) continua na pasta; apague as antigas quando quiser, uma a uma.
 
 O script completa o histórico se o clone for raso, verifica o bundle, **clona o bundle numa pasta
 de teste e roda `git fsck`** antes de subir, **nunca sobrescreve** (nome existente → código 4,

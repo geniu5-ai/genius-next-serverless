@@ -22,7 +22,8 @@ Ambiente:
   STANDBY_VAULT_URL    URL do Neon da role ``vault_rw`` (alternativa: DATABASE_URL do dono)
   STANDBY_VAULT_ACTOR  rotulo de quem chama, gravado no log (padrao: usuario@maquina)
   STANDBY_VAULT_TRANSPORT  auto (padrao) | pg | http. 'auto' usa o Postgres direto se a porta abrir
-                       e, se nao abrir (sandbox do Claude Code), o SQL sobre HTTPS do Neon
+                       (teste de ate 2,5 s, guardado por 30 min) e, se nao abrir (sandbox do Claude
+                       Code), o SQL sobre HTTPS do Neon
 
 Cifra: AES-256-GCM (autenticada). A chave de 256 bits sai da chave mestra por HKDF-SHA256 e o nome
 do segredo entra como dado autenticado associado (AAD): alterar o texto cifrado, ou trocar o
@@ -49,6 +50,8 @@ import re
 import socket
 import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
@@ -204,6 +207,37 @@ def _ator() -> str:
 
 
 _TRANSPORTE: str | None = None
+_CACHE_TTL_S = 1800  # a decisao pg/http vale 30 min: so a 1a chamada de cada sessao paga o teste
+
+
+def _sondar(host: str, porta: int, prazo_total: float = 2.5) -> str:
+    """``pg`` se alguma das 2 primeiras rotas abrir a porta dentro do prazo; senao ``http``.
+
+    ``socket.create_connection`` tenta cada endereco com o timeout inteiro (12 s no sandbox, onde a
+    porta e bloqueada); aqui o prazo e total e curto.
+    """
+    fim = time.monotonic() + prazo_total
+    try:
+        rotas = socket.getaddrinfo(host, porta, type=socket.SOCK_STREAM)
+    except OSError:
+        return "http"
+    for familia, tipo, proto, _, endereco in rotas[:2]:
+        restante = fim - time.monotonic()
+        if restante <= 0:
+            break
+        try:
+            with socket.socket(familia, tipo, proto) as s:
+                s.settimeout(min(1.2, restante))
+                s.connect(endereco)
+            return "pg"
+        except OSError:
+            continue
+    return "http"
+
+
+def _arquivo_cache(host: str) -> Path:
+    chave = hashlib.sha256(host.encode()).hexdigest()[:12]
+    return Path(tempfile.gettempdir()) / f"standby-vault-transporte-{chave}"
 
 
 def _transporte() -> str:
@@ -214,13 +248,22 @@ def _transporte() -> str:
     modo = os.environ.get("STANDBY_VAULT_TRANSPORT", "auto").strip().lower()
     if modo in ("pg", "http"):
         _TRANSPORTE = modo
-    else:
-        partes = urlsplit(_url())
-        try:
-            socket.create_connection((partes.hostname, partes.port or 5432), timeout=4).close()
-            _TRANSPORTE = "pg"
-        except OSError:
-            _TRANSPORTE = "http"
+        return _TRANSPORTE
+    partes = urlsplit(_url())
+    cache = _arquivo_cache(partes.hostname or "")
+    try:
+        if time.time() - cache.stat().st_mtime < _CACHE_TTL_S:
+            guardado = cache.read_text().strip()
+            if guardado in ("pg", "http"):
+                _TRANSPORTE = guardado
+                return _TRANSPORTE
+    except OSError:
+        pass
+    _TRANSPORTE = _sondar(partes.hostname or "", partes.port or 5432)
+    try:
+        cache.write_text(_TRANSPORTE)
+    except OSError:
+        pass  # sem cache so perde a pressa
     return _TRANSPORTE
 
 
