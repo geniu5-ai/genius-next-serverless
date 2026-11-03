@@ -40,11 +40,11 @@ jobs:
       - name: Abre ou atualiza a issue de incidente
         if: failure()
         run: |
-          body="Serverless (Render) respondeu HTTP ${{ steps.check.outputs.code }} em $(date -u +%FT%TZ). Resposta: $(head -c 400 body.json 2>/dev/null). Execução: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          body="Standby (Render) respondeu HTTP ${{ steps.check.outputs.code }} em $(date -u +%FT%TZ). Resposta: $(head -c 400 body.json 2>/dev/null). Execução: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           n=$(gh issue list --label monitor --state open --json number -q '.[0].number')
           if [ -z "$n" ]; then
             gh label create monitor --color B60205 2>/dev/null || true
-            gh issue create --title "Serverless fora do ar ou degradado" --label monitor --body "$body"
+            gh issue create --title "Standby fora do ar ou degradado" --label monitor --body "$body"
           else
             gh issue comment "$n" --body "$body"
           fi
@@ -52,5 +52,5 @@ jobs:
         if: success()
         run: |
           for n in $(gh issue list --label monitor --state open --json number -q '.[].number'); do
-            gh issue close "$n" --comment "Serverless voltou a responder 200 com ok ($(date -u +%FT%TZ))."
+            gh issue close "$n" --comment "Standby voltou a responder 200 com ok ($(date -u +%FT%TZ))."
           done

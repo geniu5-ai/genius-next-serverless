@@ -1,7 +1,7 @@
 [project]
-name = "genius-next"
+name = "standby"
 version = "0.1.0"
-description = "Genius-Next scaffold"
+description = "Standby: app de contingencia do Genius Next (FastAPI + Procrastinate, Render + Neon)"
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.9",
