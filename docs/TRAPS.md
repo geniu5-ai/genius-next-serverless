@@ -139,3 +139,14 @@ que a corrige. As do Next que também valem aqui estão citadas pelo número del
 
 **Regra:** o destino de um backup é combinado com quem vai procurá-lo, e o resultado é mostrado do jeito que essa pessoa o vê (caminho exato, nome do bucket). Confirmar "existe" pela API não basta; diga onde olhar.
 
+
+
+### 16. O sandbox do Claude Code não abre a porta do Postgres do Neon
+**Data:** 03/nov/2026 | **Impacto:** `vault.py` (e qualquer `psql`/`psycopg`) a partir de uma sessão do Claude Code dá `ConnectionTimeout`; o cofre só funcionava passando por uma VPS. O teste travou 90 s antes de eu perceber.
+
+**Causa:** o proxy da sessão só deixa sair HTTPS; a porta 5432 não sai.
+
+**Correção:** o Neon aceita SQL sobre HTTPS (`POST https://<host>/sql`, cabeçalho `Neon-Connection-String`), que passa pelo proxy. O `vault.py` ganhou esse transporte, escolhido sozinho quando a porta não abre. O rótulo do log vai por `set_config('application_name', ..., true)` no mesmo lote (transação).
+
+**Regra:** teste a porta (`socket.create_connection(..., timeout=4)`) antes de abrir conexão de banco numa ferramenta que roda no sandbox, e dê um caminho por HTTPS. Em modo texto cru o Neon devolve tudo como texto (`t`/`f` no booleano): normalize na borda.
+\n
