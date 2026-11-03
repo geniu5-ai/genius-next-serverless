@@ -93,6 +93,27 @@ def acordar(base_url: str, secret: str, motivo: dict) -> dict:
     raise RuntimeError(f"nao acordou: {ultimo_erro}")
 
 
+def normalizar(valor: str, nome: str = "") -> str:
+    """Limpa o que costuma vir junto ao colar um segredo: espacos, aspas e o prefixo ``NOME=``."""
+    valor = valor.strip().strip("\"'").strip()
+    if nome and valor.startswith(nome + "="):
+        valor = valor[len(nome) + 1 :].strip().strip("\"'").strip()
+    return valor
+
+
+def descrever_url(url: str) -> str:
+    """Diagnostico sem segredo: esquema, usuario e host (nunca a senha)."""
+    from urllib.parse import urlsplit
+
+    try:
+        partes = urlsplit(url)
+        if partes.scheme not in ("postgresql", "postgres"):
+            return f"esquema inesperado ({partes.scheme or 'vazio'!r}); a URL deve comecar com postgresql://"
+        return f"usuario={partes.username!r} host={partes.hostname!r}"
+    except ValueError:
+        return "URL ilegivel"
+
+
 def escrever_saida(**itens: object) -> None:
     caminho = os.environ.get("GITHUB_OUTPUT")
     if not caminho:
@@ -103,7 +124,7 @@ def escrever_saida(**itens: object) -> None:
 
 def main(argv: list[str]) -> int:
     check_only = "--check-only" in argv
-    database_url = os.environ.get("WAKE_DATABASE_URL", "")
+    database_url = normalizar(os.environ.get("WAKE_DATABASE_URL", ""), "WAKE_DATABASE_URL")
     if not database_url:
         print("defina WAKE_DATABASE_URL", file=sys.stderr)
         return 2
@@ -114,7 +135,10 @@ def main(argv: list[str]) -> int:
             lookahead_s=int(os.environ.get("WAKE_LOOKAHEAD_S", "300")),
         )
     except Exception as exc:  # noqa: BLE001 - qualquer falha do banco vira codigo 2
-        print(f"erro ao consultar o banco: {type(exc).__name__}", file=sys.stderr)
+        print(
+            f"erro ao consultar o banco: {type(exc).__name__} ({descrever_url(database_url)})",
+            file=sys.stderr,
+        )
         return 2
     print(json.dumps(estado.as_dict()))
     forcar = os.environ.get("WAKE_FORCE") == "1"
@@ -123,8 +147,8 @@ def main(argv: list[str]) -> int:
     if check_only or not precisa:
         print("nada vencido: o servico continua dormindo" if not precisa else "precisa acordar")
         return 0
-    base_url = os.environ.get("WAKE_URL", "").rstrip("/")
-    secret = os.environ.get("CONTROL_HMAC_SECRET", "")
+    base_url = normalizar(os.environ.get("WAKE_URL", "")).rstrip("/")
+    secret = normalizar(os.environ.get("CONTROL_HMAC_SECRET", ""), "CONTROL_HMAC_SECRET")
     if not base_url or not secret:
         print("defina WAKE_URL e CONTROL_HMAC_SECRET", file=sys.stderr)
         return 2
