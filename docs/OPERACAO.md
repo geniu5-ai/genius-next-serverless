@@ -295,7 +295,7 @@ de um lado, 111 do outro, **106 idênticos**.
 | Diferentes | `app/main.py`, `app/observability.py`, `app/status/audit.py`, `app/webapp/router.py` |
 | Só no Next | `app/curator/*` (documentação e `supabase_to_lessons.py`), `app/embed/main.py` (sidecar de embedding) |
 | Só no Standby | `app/wake.py` |
-| Idênticos e sensíveis a mudança | `app/durable/followup.py`, `app/status/rules.py`, `app/reply/llm.py`, `app/reply/prompt_profiles.py` |
+| Idênticos e sensíveis a mudança | `app/durable/followup.py`, `app/status/rules.py`, `app/reply/llm.py`, `app/reply/prompt_profiles.py` (o patch do follow-up de 03/nov entrou nos quatro, ver abaixo) |
 
 **Conferir de novo** (no clone do Standby; a lista do Next vem de `git ls-files app` na VPS 002):
 
@@ -303,6 +303,14 @@ de um lado, 111 do outro, **106 idênticos**.
 git ls-files app | grep -v pycache | xargs sha1sum | awk '{print $2" "$1}' | sort > standby.sha
 # no Next (como ubuntu, em ~/Genius-Next): o mesmo comando, salvo em next.sha; depois comparar os dois arquivos
 ```
+
+**Espelhado do Next em 03/nov/2026** (PR do Next: `geniu5-ai/Genius-Next#74`):
+
+- `app/status/rules.py`, `app/durable/followup.py`, `app/durable/flow.py`, `app/reply/llm.py`, `app/settings.py`: objeção (distância, custo, tempo) e despedida pausam o ciclo de follow-up; teto de mensagens por contato em 24 h (3) e 7 dias (5, `FOLLOWUP_MAX_PER_PHONE_7D`); sem escassez obrigatória na tentativa 2; ângulos de pressão e de comparação saem depois de objeção; `data_atual` no contexto do follow-up.
+- `app/reply/tools/reasoning.py`: a rota densa tenta uma vez o modelo do turno quando o modelo de raciocínio falha (HTTP != 200).
+- `app/durable/pendentes.py`, `app/durable/manager_tick.py`: ao devolver a conversa da equipe ao bot, o Manager aborda na hora quem ficou com a última fala sem resposta (só tenants de `MANAGER_PENDENTES_TENANTS`).
+- Testes: `tests/test_followup_objecao.py` (106) e os helpers de que ele depende (`tests/test_followup_guard.py`, `tests/followup_chain.py`, `tests/media_stub.py`), copiados do Next. Sem Postgres, 8 testes de `test_followup_guard.py` falham por senha do banco de teste (`user "test"`): são os mesmos que falham no Next sem banco. Os 106 novos passam.
+- **Não** foram copiados os testes de `test_pendentes.py`, `test_manager_agenda.py` e `test_manager_agent.py` (o Standby não os tem).
 
 **Diferenças deliberadas:** `app/wake.py` (acorda o worker no Render free); `app/embed/` e `app/curator/`
 não existem aqui (sem sidecar de embedding, `OPERACAO.md` "Pendente" item 2). As quatro divergências
