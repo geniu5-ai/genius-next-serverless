@@ -149,4 +149,3 @@ que a corrige. As do Next que também valem aqui estão citadas pelo número del
 **Correção:** o Neon aceita SQL sobre HTTPS (`POST https://<host>/sql`, cabeçalho `Neon-Connection-String`), que passa pelo proxy. O `vault.py` ganhou esse transporte, escolhido sozinho quando a porta não abre. O rótulo do log vai por `set_config('application_name', ..., true)` no mesmo lote (transação).
 
 **Regra:** teste a porta (`socket.create_connection(..., timeout=4)`) antes de abrir conexão de banco numa ferramenta que roda no sandbox, e dê um caminho por HTTPS. Em modo texto cru o Neon devolve tudo como texto (`t`/`f` no booleano): normalize na borda.
-\n
