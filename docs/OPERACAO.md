@@ -221,5 +221,5 @@ esperado: job verde e `{"status": "awake", "jobs_vencidos": 0, ...}`. Verificado
    `geniu5-ai/Genius-Next`, sem tocar nas VPS.
 8. Rotacionar as credenciais que apareceram em conversa (`wake_ro`, `CONTROL_HMAC_SECRET`) ao criar
    o cofre novo.
-9. Criar o ambiente da sessão com `STANDBY_VAULT_URL` e `STANDBY_VAULT_KEY` (os dois valores estão num
-   arquivo local ignorado pelo git; copiar e apagar) e testar `python scripts/vault.py list` numa sessão nova.
+9. Criar o ambiente da sessão com `STANDBY_VAULT_URL` e `STANDBY_VAULT_KEY` (os dois valores estão em
+   `vault-env.local`, arquivo local ignorado pelo git; copiar e só então apagar) e testar `python scripts/vault.py list` numa sessão nova.
