@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from zoneinfo import ZoneInfo
@@ -15,6 +15,12 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from sqlalchemy.orm import Session
 
 from app import observability
+from app.context.campaigns import (
+    CHAVE_CONTEXTO as _CHAVE_CAMPANHAS,
+    GUIA_DE_ENTRADA as _GUIA_CAMPANHAS,
+    campanhas_vigentes,
+    incluir_no_contexto as _incluir_campanhas,
+)
 from app.context.knowledge import list_catalog, open_knowledge
 from app.context.get_scripts.customer_profile_v1 import CustomerProfileV1, get_customer_profile
 from app.contracts import ReplyDraft
@@ -66,6 +72,15 @@ def _data_atual_negocio() -> str:
     """Data de hoje + dia da semana em pt-BR, fuso America/Fortaleza."""
     agora = datetime.now(_BUSINESS_TIMEZONE)
     return f"{agora.strftime('%d/%m/%Y')} ({_WEEKDAYS_PT_BR[agora.weekday()]})"
+
+
+def _hoje_negocio() -> date:
+    """Data de hoje no fuso do negocio (a mesma base de ``data_atual``).
+
+    Vigencia de campanha (app/context/campaigns.py) compara com esta data: perto
+    da meia-noite, UTC e Fortaleza discordam em tres horas.
+    """
+    return datetime.now(_BUSINESS_TIMEZONE).date()
 
 
 def _parse_reply_draft(content: str) -> ReplyDraft:
@@ -182,6 +197,7 @@ def _default_reply_rules(tenant_id: str, *, allow_tools: bool) -> list[str]:
 # calado), entao o guia do atendimento normal ("responda a estas") descreveria
 # campos que nao existem e esconderia os que existem.
 _FOLLOWUP_INPUT_GUIDE: dict[str, str] = {
+    "data_atual": "data de hoje e dia da semana (fuso de Fortaleza); nunca cite prazo ou data que já passou; campanha só existe em campanhas_vigentes",
     "follow_up_attempt": "número desta tentativa; define o papel da mensagem (veja a regra da tentativa)",
     "history": "a conversa até agora, com o que o cliente, a atendente e a equipe já disseram",
     "mensagens_ja_enviadas": "o que você já enviou a esta pessoa: não repita nem parafraseie",
@@ -189,8 +205,10 @@ _FOLLOWUP_INPUT_GUIDE: dict[str, str] = {
     "fechos_ja_usados": "como as mensagens anteriores terminaram: não termine de modo parecido",
     "angulo_da_vez": "ângulo de persuasão desta mensagem; adapte ao que a pessoa disse",
     "apos_encaminhamento_equipe": "true quando esta mensagem nasceu de um encaminhamento à equipe que expirou sem resposta dela: a pessoa espera a equipe — não repita pergunta já respondida, não prometa prazo novo, não pressione por agenda nem campanha",
+    "apos_objecao_do_paciente": "true quando a pessoa já apontou um obstáculo (distância, preço, tempo) ou adiou em algum ponto da conversa: acolha, não rebata, não compare com outras pessoas e não pressione",
     "client": "perfil conhecido do cliente (nome, status, última intenção)",
-    "informacoes_da_empresa": "fatos oficiais da empresa; única fonte para valor, campanha, preparo e diferencial",
+    "informacoes_da_empresa": "fatos oficiais da empresa; única fonte para valor, preparo e diferencial",
+    _CHAVE_CAMPANHAS: _GUIA_CAMPANHAS,
 }
 
 
@@ -266,6 +284,7 @@ def _build_system_prompt(
                         "client.status": "new = primeiro contato; demais = já conhecido",
                         "client.summary": "histórico verificado de antes desta conversa",
                         "lessons": "dicas táticas opcionais; use só se couber",
+                        _CHAVE_CAMPANHAS: _GUIA_CAMPANHAS,
                     }
                 ),
                 "rules": rules,
@@ -708,6 +727,7 @@ def draft_reply(
 
     lessons_found: list[str] | None = None
     catalog: list[tuple[str, str]] = []
+    campanhas: list[Any] = []
 
     # Fetch PG memory when session is available
     pg_history: ConversationHistory | None = None
@@ -758,6 +778,8 @@ def draft_reply(
             if result.lessons:
                 lessons_found = [lesson.content for lesson in result.lessons]
         catalog = list_catalog(session, tenant_id=turn.tenant_id)
+        # Nunca levanta: sem tabela ou com erro de SQL devolve lista vazia.
+        campanhas = campanhas_vigentes(session, turn.tenant_id)
 
     context = _reply_context(
         turn,
@@ -771,6 +793,7 @@ def draft_reply(
 
     if lessons_found is not None:
         context["lessons"] = lessons_found
+    _incluir_campanhas(context, campanhas)
 
     # First-contact curated summary (or a summary already persisted from a
     # prior turn inside the profile payload built by _reply_context) makes

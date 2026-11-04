@@ -1,8 +1,33 @@
+# Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 .venv/
+venv/
+
+# Segredos e arquivos locais: nunca no repositório (este repositório é PÚBLICO)
 .env
+.env.*
+!.env.example
 *.local
 *.bundle
+*.pem
+*.key
+
+# Lixo de execução e de medição
+*.log
+*.bak
+*.orig
+*.swp
+results*.json
+.deepeval/
+node_modules/
+
+# Editor e sistema
+.DS_Store
+.idea/
+.vscode/

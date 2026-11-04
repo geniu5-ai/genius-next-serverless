@@ -195,6 +195,10 @@ class Settings(BaseSettings):
     # Follow-up (15/out/2026): teto de follow-ups confirmados por contato em 24 h,
     # somando ciclos diferentes (cada resposta do paciente abria um ciclo novo).
     FOLLOWUP_MAX_PER_PHONE_24H: int = Field(default=3, ge=0, le=20)
+    # 03/nov/2026: teto em 7 dias, somando todos os ciclos do contato (5 = um ciclo
+    # cheio de 3 tentativas mais 2 de um segundo ciclo). Contido no abrir do ciclo
+    # e a cada despertar/envio, entao vale tambem para jobs ja agendados.
+    FOLLOWUP_MAX_PER_PHONE_7D: int = Field(default=5, ge=0, le=50)
     # Envio de MODELO (template) da Meta — 18/out/2026. A única mensagem que o
     # WhatsApp aceita fora da janela de 24 h; texto livre ali devolve 131047.
     # Desligado por padrão: ligar exige a flag E o tenant na lista (mesmo

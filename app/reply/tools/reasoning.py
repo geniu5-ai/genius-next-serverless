@@ -189,8 +189,11 @@ def chama_modelo_denso(
     max_tokens: int,
     temperature: float = 0.4,
     extra_body: dict[str, Any] | None = None,
+    _tentou_fallback: bool = False,
 ) -> str | None:
     """POST /chat/completions. ``None`` em qualquer falha ou saída truncada.
+
+    HTTP != 200 repete UMA vez com ``OMNIROUTE_MODEL`` (modelo do turno) quando difere de ``model``.
 
     ``extra_body`` entra no corpo do POST (ex.: ``{"thinking": {"type":
     "disabled"}}`` na triagem, TRAPS #45); padrao ``None`` = corpo de sempre.
@@ -220,7 +223,22 @@ def chama_modelo_denso(
             timeout=timeout,
         )
         if response.status_code != 200:
-            logger.warning("rota densa HTTP %s", response.status_code)
+            logger.warning("rota densa HTTP %s (modelo %s)", response.status_code, model)
+            # 03/nov/2026: o modelo da rota densa saiu do catalogo do roteador (404) e TODA
+            # triagem caiu em handoff. Uma vez, no modelo do turno (que responde); as saidas
+            # seguem pelas mesmas guardas de quem chama.
+            fallback = settings.OMNIROUTE_MODEL
+            if fallback and fallback != model and not _tentou_fallback:
+                return chama_modelo_denso(
+                    system,
+                    user,
+                    model=fallback,
+                    timeout=timeout,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    extra_body=extra_body,
+                    _tentou_fallback=True,
+                )
             return None
         payload = response.json()
         choice = (payload.get("choices") or [{}])[0]

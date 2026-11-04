@@ -42,10 +42,15 @@ from app.jobs import (
     defer_once,
     jobs,
 )
-from app.reply.llm import _build_system_prompt, _secret_value
+from app.context.campaigns import (
+    CHAVE_CONTEXTO as CHAVE_CAMPANHAS,
+    campanhas_vigentes as campanhas_vigentes_hoje,
+    formatar_para_contexto as formatar_campanhas,
+)
+from app.reply.llm import _build_system_prompt, _data_atual_negocio, _secret_value
 from app.reply.split import split_human_reply
 from app.settings import get_settings
-from app.status.rules import is_deferral_or_closing
+from app.status.rules import is_deferral_or_closing, is_farewell, is_objection
 
 logger = logging.getLogger(__name__)
 
@@ -114,13 +119,14 @@ FOLLOWUP_RULE_ATTEMPT_1 = (
 FOLLOWUP_RULE_ATTEMPT_2 = (
     "Este é o 2º follow-up. Traga um MOTIVO NOVO para decidir, diferente do "
     "primeiro toque, usando um ângulo do repertório do perfil e algo "
-    "específico e real que ESTE cliente disse (veja history). Inclua, com "
-    "palavras suas e sem repetir mensagens anteriores, a ideia de que os "
-    "horários da semana são poucos ou de que a agenda do especialista "
-    "costuma encher, e ofereça verificar com a equipe em forma de "
-    "pergunta. Calor humano, insistência leve e educada, pedido fácil de "
-    "responder. Se o cliente já recusou em qualquer ponto desta conversa, "
-    "não envie isto: apenas confirme que viu a mensagem anterior."
+    "específico e real que ESTE cliente disse (veja history). Não invente "
+    "escassez nem urgência: qualquer menção a horários limitados ou agenda "
+    "cheia só vale se o perfil do tenant mandar e for verdade para esta "
+    "conversa. Ofereça verificar com a equipe em forma de pergunta. Calor "
+    "humano, insistência leve e educada, pedido fácil de responder. Se o "
+    "cliente já recusou ou apontou um obstáculo (distância, preço, tempo) em "
+    "qualquer ponto desta conversa, não envie isto: apenas confirme que viu "
+    "a mensagem anterior."
 )
 
 # Attempt 3 (+24h, next business day): a full day passed -- do not just
@@ -134,7 +140,7 @@ FOLLOWUP_RULE_ATTEMPT_3 = (
     "outras palavras o pedido das tentativas anteriores. Traga algo NOVO "
     "de valor para a pessoa decidir: uma informação útil e verdadeira, a "
     "antecipação de uma dúvida provável dela ou um convite para conhecer a "
-    "empresa. Pode reforçar com leveza que a agenda costuma encher. Feche "
+    "empresa. Não use escassez nem urgência de agenda. Feche "
     "com um próximo passo concreto e fácil, em forma de pergunta (por "
     "exemplo escolher entre dois caminhos), e deixe a porta aberta sem "
     "culpa e sem cobrança; nunca termine só com \"fico à disposição\". Se o "
@@ -425,19 +431,25 @@ def ensure_follow_up_v2_lifecycle_txn(
     """Durably create the V2 lifecycle once before scheduling any attempt.
 
     ``True`` so para quem criou: e o que impede dois ciclos para o mesmo turno de origem
-    (antes quem impedia era o ID estavel do workflow).
+    (antes quem impedia era o ID estavel do workflow). ``False`` tambem quando a
+    guarda de abertura (``motivo_para_nao_abrir_ciclo``) recusa o ciclo.
     """
-    created = sql_session().execute(
-        _LIFECYCLE_ENSURE_SQL,
-        {
-            "tenant_id": tenant_id,
-            "origin_turn_id": origin_turn_id,
-            "phone": phone,
-            "remote_jid": remote_jid,
-            "instance": instance,
-            "origin_sequence": _origin_sequence(sql_session(), tenant_id, origin_turn_id),
-        },
-    )
+    params = {
+        "tenant_id": tenant_id,
+        "origin_turn_id": origin_turn_id,
+        "phone": phone,
+        "remote_jid": remote_jid,
+        "instance": instance,
+        "origin_sequence": _origin_sequence(sql_session(), tenant_id, origin_turn_id),
+    }
+    # 03/nov/2026: guarda de ABERTURA do ciclo (objecao/despedida/adiamento na
+    # ultima fala, teto de 24 h e 7 dias). Registra o ciclo como stopped com o
+    # motivo e devolve False: nada e agendado.
+    motivo = motivo_para_nao_abrir_ciclo(sql_session(), tenant_id, phone)
+    if motivo is not None:
+        sql_session().execute(_LIFECYCLE_ENSURE_STOPPED_SQL, {**params, "reason": motivo})
+        return False
+    created = sql_session().execute(_LIFECYCLE_ENSURE_SQL, params)
     return created.rowcount == 1
 
 
@@ -678,6 +690,85 @@ _FOLLOWUPS_24H_SQL = _sql_text(
 )
 
 
+# Follow-ups confirmados para o contato nos ultimos 7 dias, somando ciclos.
+# 03/nov/2026: o teto de 24 h sozinho deixava o contato receber 3 mensagens por
+# dia, todo dia, enquanto ele respondesse (cada resposta abria um ciclo novo).
+_FOLLOWUPS_7D_SQL = _sql_text(
+    """
+    /* followup.confirmed_last_7d */
+    SELECT count(*)
+    FROM genius_next.follow_up_attempt_receipts AS r
+    JOIN genius_next.follow_up_lifecycles AS l
+      ON l.tenant_id = r.tenant_id AND l.origin_turn_id = r.origin_turn_id
+    WHERE r.tenant_id = :tenant_id AND l.phone = :phone
+      AND r.status = 'confirmed' AND r.recorded_at > now() - interval '7 days'
+    """
+)
+
+# Ciclo que nao chegou a abrir: fica registrado (stopped + motivo) para auditoria.
+_LIFECYCLE_ENSURE_STOPPED_SQL = _sql_text(
+    """
+    /* followup.v2_lifecycle_ensure_stopped */
+    INSERT INTO genius_next.follow_up_lifecycles
+        (tenant_id, origin_turn_id, phone, remote_jid, instance, origin_sequence, state, stop_reason)
+    VALUES (:tenant_id, :origin_turn_id, :phone, :remote_jid, :instance, :origin_sequence, 'stopped', :reason)
+    ON CONFLICT (tenant_id, origin_turn_id) DO NOTHING
+    """
+)
+
+# Limites (03/nov/2026): ver FOLLOWUP_MAX_PER_PHONE_24H / _7D em app/settings.py.
+# - 24 h: no maximo 3 tentativas confirmadas por contato, somando ciclos.
+# - 7 dias: no maximo 5 (um ciclo cheio de 3 mais 2 de um segundo ciclo).
+# O teto vale na abertura do ciclo (``ensure_follow_up_v2_lifecycle_txn``) e a
+# cada despertar/envio (``_should_continue``), entao jobs ja agendados antes
+# deste deploy tambem sao contidos.
+MOTIVO_FALA_ENCERRA = "fala_do_paciente_encerra"
+MOTIVO_TETO_24H = "teto_24h"
+MOTIVO_TETO_7D = "teto_7d"
+
+
+def _fala_encerra_ciclo(ultimas: list[str]) -> bool:
+    """A conversa terminou, do lado do paciente: adiamento, objecao ou despedida.
+
+    ``ultimas`` vem de ``_LAST_INBOUND_TEXT_SQL`` (as duas falas mais recentes, a
+    mais nova primeiro). Adiamento/objecao valem nas duas ("Depois falo com
+    voce" seguido de "Ok" e adiamento); despedida ("ok obrigada") so na ultima:
+    quem agradeceu e depois fez uma pergunta nao se despediu.
+    """
+    if any(t and is_deferral_or_closing(t) for t in ultimas):
+        return True
+    return bool(ultimas and ultimas[0] and is_farewell(ultimas[0]))
+
+
+def _teto_de_envios_atingido(session: Session, tenant_id: str, phone: str) -> str | None:
+    """Motivo do teto de follow-ups por contato (24 h, depois 7 dias), ou ``None``."""
+    settings = get_settings()
+    params = {"tenant_id": tenant_id, "phone": phone}
+    sent_24h = session.execute(_FOLLOWUPS_24H_SQL, params).scalar_one_or_none() or 0
+    if sent_24h >= settings.FOLLOWUP_MAX_PER_PHONE_24H:
+        return MOTIVO_TETO_24H
+    sent_7d = session.execute(_FOLLOWUPS_7D_SQL, params).scalar_one_or_none() or 0
+    if sent_7d >= settings.FOLLOWUP_MAX_PER_PHONE_7D:
+        return MOTIVO_TETO_7D
+    return None
+
+
+def motivo_para_nao_abrir_ciclo(session: Session, tenant_id: str, phone: str) -> str | None:
+    """Por que um ciclo NOVO de follow-up nao deve abrir para este contato, ou ``None``.
+
+    03/nov/2026 (incidente "Vix" / "Muito longe"): o ciclo reabria a cada resposta
+    do paciente, mesmo sendo uma objecao ou despedida, e nao havia teto real de
+    mensagens. Agora nao abre ciclo quando a ultima fala do paciente adia,
+    objeta ou se despede, nem quando o contato ja atingiu o teto de 24 h / 7 dias.
+    """
+    ultimas = session.execute(
+        _LAST_INBOUND_TEXT_SQL, {"tenant_id": tenant_id, "phone": phone}
+    ).scalars().all()
+    if _fala_encerra_ciclo(list(ultimas)):
+        return MOTIVO_FALA_ENCERRA
+    return _teto_de_envios_atingido(session, tenant_id, phone)
+
+
 def _origin_sequence(session: Session, tenant_id: str, turn_id: str) -> int:
     """Return the last_sequence of the origin turn, defaulting to 0."""
     row = session.execute(
@@ -725,19 +816,16 @@ def _should_continue(
 
     # 15/out/2026: a ultima fala do paciente foi adiamento/encerramento ("sem
     # pressa", "quando o dinheiro entrar"): insistir vira cobranca.
-    # As duas ultimas falas: "Depois falo com voce" seguido de "Ok" e adiamento.
+    # 03/nov/2026: objecao (distancia/custo/tempo) e despedida ("ok obrigada") tambem.
     ultimas = session.execute(
         _LAST_INBOUND_TEXT_SQL, {"tenant_id": tenant_id, "phone": phone}
     ).scalars().all()
-    if any(t and is_deferral_or_closing(t) for t in ultimas):
+    if _fala_encerra_ciclo(list(ultimas)):
         return False
 
     # 15/out/2026: teto por contato em 24 h, somando ciclos (cada resposta do
-    # paciente abria um ciclo novo de 2 tentativas).
-    sent_24h = session.execute(
-        _FOLLOWUPS_24H_SQL, {"tenant_id": tenant_id, "phone": phone}
-    ).scalar_one_or_none() or 0
-    if sent_24h >= get_settings().FOLLOWUP_MAX_PER_PHONE_24H:
+    # paciente abria um ciclo novo de 2 tentativas). 03/nov/2026: e em 7 dias.
+    if _teto_de_envios_atingido(session, tenant_id, phone) is not None:
         return False
 
     client = session.execute(
@@ -834,21 +922,25 @@ _JA_ENVIADAS_MAX = 6
 # (tenant, contato, tentativa, quantas mensagens já saíram): sem isso o modelo
 # volta sempre ao mesmo ângulo favorito e a conversa vira oito mensagens iguais.
 FOLLOWUP_ANGULOS: tuple[tuple[str, str], ...] = (
-    ("horario_agenda", "urgência leve e verdadeira de agenda: horários poucos na semana ou agenda do profissional que costuma encher, sem número nem prazo"),
-    ("valor_educativo", "explicar em termos gerais e sem número por que o que a pessoa busca importa, de forma educativa e sem prometer resultado"),
+    # 03/nov/2026: revisao de TODOS os angulos (incidente "Muito longe"): nenhum
+    # pode apontar culpa, comparar a pessoa com terceiros ("outras familias/pessoas
+    # fazem X mesmo com [obstaculo que ela citou]") nem contornar um obstaculo que
+    # ela mesma apontou. Escassez e' recurso de ultimo caso (conversa avancada).
+    ("horario_agenda", "RECURSO DE ÚLTIMO CASO, nunca padrão: só se o perfil do tenant autorizar e a conversa já estiver avançada (a pessoa disse o que quer e já recebeu a informação); nunca para quem só pediu informação nem depois de objeção. Urgência leve e verdadeira de agenda, sem número nem prazo"),
+    ("valor_educativo", "explicar em termos gerais e sem número por que o que a pessoa busca importa, de forma educativa e sem prometer resultado; sem medo, sem culpa e sem comparar com outras pessoas"),
     ("facilidade", "reduzir o esforço: mostrar o menor próximo passo possível para encaminhar"),
     ("duvida_antecipada", "antecipar a dúvida provável (como funciona, o que levar, como é o primeiro passo) usando só fatos disponíveis"),
-    ("reciprocidade", "dar algo útil antes de pedir: uma dica, uma informação ou um esclarecimento relevante para o caso dela"),
+    ("reciprocidade", "dar algo útil antes de pedir: uma dica, uma informação ou um esclarecimento relevante para o caso dela, sem condicionar a nada"),
     ("compromisso", "retomar o que a própria pessoa pediu ou disse que ia fazer, como continuação natural do que ela começou"),
     ("escolha_pequena", "propor uma escolha mínima entre dois caminhos (período ou dia), nunca um horário exato"),
-    ("motivo_pessoal", "ligar ao motivo de quem ela quer cuidar ou ao que ela quer resolver, sem apontar descuido nem culpa"),
+    ("motivo_pessoal", "ligar ao que a própria pessoa contou que quer resolver ou a quem ela cuida, usando só o que ela disse, sem apontar descuido nem culpa. PROIBIDO comparar com terceiros: nunca dizer que outras famílias/pessoas fazem X mesmo com [obstáculo que ela citou: distância, preço, tempo]. Exemplo NEGATIVO real, jamais escrever algo assim: \"Algumas famílias decidem proteger seus filhos contra a meningite mesmo morando mais longe\""),
     ("encolher_decisao", "baixar a barreira: o primeiro passo é pequeno (conversar, avaliar, tirar a dúvida), não a decisão final"),
     ("pergunta_curiosa", "uma pergunta aberta e curiosa sobre a situação dela, com eco do que ela disse, para reabrir a conversa"),
     ("validacao_do_passo", "reconhecer com sinceridade que ter procurado já foi um bom passo e que é natural decidir com calma"),
-    ("autoridade_verdadeira", "citar um diferencial, profissional ou estrutura que conste nas informações da empresa"),
+    ("autoridade_verdadeira", "citar um diferencial, profissional ou estrutura que conste nas informações da empresa, sem comparar com outras clínicas ou pessoas e sem usar isso para vencer uma objeção"),
     ("convite_conhecer", "convidar a conhecer a empresa pelo perfil, site ou conteúdo, apenas se o link constar nas informações do perfil"),
     ("oferta_de_verificar", "perguntar se ela quer que a equipe veja a disponibilidade da semana, em forma de pergunta e sem prometer"),
-    ("campanha_vigente", "mencionar condição ou campanha que conste nas informações e esteja vigente"),
+    ("campanha_vigente", "mencionar uma campanha de campanhas_vigentes, pelo que está escrito nela; se campanhas_vigentes não existir no contexto, não cite campanha e faça uma pergunta leve sobre o que a pessoa procura"),
 )
 _FOLLOWUP_ANGULOS_NAO_NA_1A = frozenset({"convite_conhecer", "campanha_vigente"})
 # 22/out/2026 (incidente followup-contradiz-handoff, contato 9322): pressao de
@@ -857,6 +949,19 @@ _FOLLOWUP_ANGULOS_NAO_NA_1A = frozenset({"convite_conhecer", "campanha_vigente"}
 # viram cobranca (AGENTS.md regra 9 — o agente nao vira cobrador quando a falha
 # e da equipe).  Ciclo nascido de handoff expirado nunca usa estes angulos.
 _FOLLOWUP_ANGULOS_NAO_POS_HANDOFF = frozenset({"horario_agenda", "campanha_vigente"})
+# 03/nov/2026: depois de QUALQUER objecao do paciente na conversa (distancia,
+# custo, tempo, adiamento) saem os angulos de pressao ou de comparacao com
+# terceiros. Sobram so os que acolhem, esclarecem ou perguntam.
+_FOLLOWUP_ANGULOS_NAO_POS_OBJECAO = frozenset(
+    {
+        "horario_agenda",
+        "campanha_vigente",
+        "motivo_pessoal",
+        "autoridade_verdadeira",
+        "valor_educativo",
+        "escolha_pequena",
+    }
+)
 _FOLLOWUP_ANGULO_FINAL = ("porta_aberta", "fechar com elegância e sem pressão, deixando a porta aberta para quando ela quiser")
 
 
@@ -867,11 +972,15 @@ def angulo_da_vez(
     ja_enviadas: int,
     *,
     pos_handoff: bool = False,
+    pos_objecao: bool = False,
 ) -> tuple[str, str]:
     """Ângulo sugerido para esta mensagem, estável para a mesma conversa e variando entre elas.
 
     ``pos_handoff``: o ciclo nasceu de um encaminhamento à equipe que expirou
     sem resposta dela — exclui os ângulos de pressão/urgência.
+    ``pos_objecao``: o paciente já objetou (distância, custo, tempo) ou adiou em
+    algum ponto da conversa — exclui os ângulos de pressão e de comparação com
+    terceiros (``_FOLLOWUP_ANGULOS_NAO_POS_OBJECAO``).
     """
     import hashlib
 
@@ -886,8 +995,10 @@ def angulo_da_vez(
             continue
         if pos_handoff and angulo[0] in _FOLLOWUP_ANGULOS_NAO_POS_HANDOFF:
             continue
+        if pos_objecao and angulo[0] in _FOLLOWUP_ANGULOS_NAO_POS_OBJECAO:
+            continue
         return angulo
-    return FOLLOWUP_ANGULOS[0]
+    return _FOLLOWUP_ANGULO_FINAL
 
 
 def _pontas(texto: str, n: int = 4) -> tuple[str, str]:
@@ -960,7 +1071,40 @@ _REGRA_POS_HANDOFF = (
 )
 
 
-def follow_up_extra_rules(attempt: int, *, pos_handoff: bool = False) -> list[str]:
+# 03/nov/2026 (incidente "Muito longe"): a terceira mensagem do ciclo disse que
+# "algumas famílias decidem proteger seus filhos mesmo morando mais longe" para
+# quem tinha acabado de dizer que era longe. Regra dura para todas as tentativas.
+_REGRA_SEM_COMPARACAO = (
+    "SEM COMPARAÇÃO NEM CULPA (regra dura): nunca compare a pessoa com terceiros, como "
+    "\"outras famílias/pessoas fazem X mesmo com [obstáculo que ela citou]\", e nunca "
+    "contorne um obstáculo que ela apontou (distância, preço, tempo) nem sugira descuido, "
+    "medo ou culpa. Escassez de horários só se o perfil mandar, a conversa estiver avançada "
+    "e for verdade. Campanha só se estiver em campanhas_vigentes; nunca escreva um mês por conta própria."
+)
+
+# Depois de objecao a conversa e' dela: reconhecer, nunca rebater.
+_REGRA_POS_OBJECAO = (
+    "PÓS-OBJEÇÃO (regra dura): em algum ponto desta conversa a pessoa apontou um obstáculo "
+    "(distância, preço, tempo) ou adiou. Reconheça com respeito, sem rebater, sem repetir o "
+    "convite e sem pressão de agenda, campanha ou comparação; se não houver nada útil e "
+    "novo a oferecer, confirme em uma frase curta que a porta continua aberta."
+)
+
+
+def historico_tem_objecao(history: list[dict[str, str]] | None) -> bool:
+    """Alguma fala do paciente no historico e' objecao ou adiamento (distancia, custo, tempo)."""
+    for message in history or []:
+        if message.get("role") not in ("user", "customer", "client"):
+            continue
+        texto = message.get("text") or ""
+        if is_objection(texto) or is_deferral_or_closing(texto):
+            return True
+    return False
+
+
+def follow_up_extra_rules(
+    attempt: int, *, pos_handoff: bool = False, pos_objecao: bool = False
+) -> list[str]:
     """Regras que o follow-up soma ao perfil do tenant: papel da tentativa e anti-repeticao.
 
     ``pos_handoff`` soma a regra dura de pós-encaminhamento (ciclo nascido de
@@ -969,7 +1113,10 @@ def follow_up_extra_rules(attempt: int, *, pos_handoff: bool = False) -> list[st
     rules = [
         FOLLOWUP_RULES_BY_ATTEMPT.get(attempt, FOLLOWUP_RULE_ATTEMPT_1),
         _REGRA_ANTI_REPETICAO,
+        _REGRA_SEM_COMPARACAO,
     ]
+    if pos_objecao:
+        rules.append(_REGRA_POS_OBJECAO)
     if pos_handoff:
         rules.append(_REGRA_POS_HANDOFF)
     return rules
@@ -985,18 +1132,29 @@ def follow_up_context(
     informacoes_da_empresa: str = "",
     *,
     pos_handoff: bool = False,
+    data_atual: str | None = None,
+    campanhas_vigentes: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Entrada JSON do rascunho do follow-up (mesma montagem em producao e na medicao).
+
+    ``data_atual``: data de hoje e dia da semana (fuso America/Fortaleza, o mesmo
+    helper do atendimento). Sem ela o follow-up citava campanha vencida e
+    "outubro" em novembro (03/nov/2026).
+
+    ``campanhas_vigentes``: itens ja formatados (``formatar_para_contexto``) das
+    campanhas que valem hoje; vazio ou ``None`` = a chave nao aparece.
 
     ``pos_handoff``: o ciclo nasceu de um handoff cuja marcação de equipe
     expirou sem resposta — o contexto avisa o modelo e o ângulo da vez deixa
     de ser um de pressão (incidente 9322).
     """
     aberturas, fechos = zip(*(_pontas(t) for t in ja_enviadas)) if ja_enviadas else ((), ())
+    pos_objecao = historico_tem_objecao(history)
     angulo_id, angulo_texto = angulo_da_vez(
-        tenant_id, phone, attempt, len(ja_enviadas), pos_handoff=pos_handoff
+        tenant_id, phone, attempt, len(ja_enviadas), pos_handoff=pos_handoff, pos_objecao=pos_objecao
     )
     context: dict[str, Any] = {
+        "data_atual": data_atual or _data_atual_negocio(),
         "follow_up_attempt": attempt,
         "history": history or [],
         "mensagens_ja_enviadas": ja_enviadas,
@@ -1006,10 +1164,14 @@ def follow_up_context(
     }
     if pos_handoff:
         context["apos_encaminhamento_equipe"] = True
+    if pos_objecao:
+        context["apos_objecao_do_paciente"] = True
     if client_profile:
         context["client"] = client_profile
     if informacoes_da_empresa:
         context["informacoes_da_empresa"] = informacoes_da_empresa
+    if campanhas_vigentes:
+        context[CHAVE_CAMPANHAS] = campanhas_vigentes
     return context
 
 
@@ -1104,6 +1266,8 @@ def draft_follow_up_step(
         if conversation.available:
             history = [{"role": msg.role, "text": msg.text} for msg in conversation.messages]
         informacoes_da_empresa = _informacoes_da_empresa(session, tenant_id, settings)
+        # Nunca levanta: sem tabela ou com erro devolve lista vazia.
+        campanhas = formatar_campanhas(campanhas_vigentes_hoje(session, tenant_id))
         pos_handoff = False
         if origin_turn_id:
             # A decisao do turno de origem e imutavel (turns.decision), ao
@@ -1120,7 +1284,9 @@ def draft_follow_up_step(
     system_prompt = _build_system_prompt(
         tenant_id,
         purpose="followup",
-        extra_rules=follow_up_extra_rules(attempt, pos_handoff=pos_handoff),
+        extra_rules=follow_up_extra_rules(
+            attempt, pos_handoff=pos_handoff, pos_objecao=historico_tem_objecao(history)
+        ),
     )
 
     ja_enviadas = [m["text"] for m in history if m.get("role") == "assistant"][-_JA_ENVIADAS_MAX:]
@@ -1133,6 +1299,7 @@ def draft_follow_up_step(
         client_profile,
         informacoes_da_empresa,
         pos_handoff=pos_handoff,
+        campanhas_vigentes=campanhas,
     )
 
     def _gerar(temperatura: float, evitar: str | None) -> ReplyDraft | None:

@@ -305,11 +305,148 @@ _ADIAMENTO = re.compile(
 )
 
 
-def is_deferral_or_closing(text: str) -> bool:
-    """O paciente adiou ou encerrou por ora: o follow-up nao deve insistir.
+# 03/nov/2026 (incidente "Vix" / "Muito longe", vacina de meningite): o paciente
+# (responsavel por um paciente) respondeu "Vix" e "Muito longe" -- uma OBJECAO de
+# distancia -- e nenhum padrao a reconhecia; o follow-up reabriu um ciclo inteiro e
+# ainda usou uma frase de culpa ("outras familias decidem mesmo morando mais
+# longe"). Objecao de distancia, custo ou tempo e uma recusa branda: quem a faz
+# nao esta "decidindo ainda", esta dizendo que o obstaculo o impede. Tratada como
+# adiamento/encerramento (pausa o follow-up) e NUNCA como loss (``llm_loss_vetado``
+# usa ``is_deferral_or_closing``): a pessoa pode voltar se a equipe resolver o
+# obstaculo, e quem decide isso e o atendimento humano, nao o regex.
+#
+# Falsos positivos que este bloco evita de proposito:
+# - Pergunta nunca e objecao ("Fica longe da rodoviaria?", "Onde fica?", "Tá
+#   caro?"): '?' no texto original (salvo o tira-duvida "né?"), pergunta de
+#   endereco e palavra interrogativa no inicio derrubam o sinal.
+# - "longe d<ponto de referencia>" ("fica longe da rodoviaria") e' pedido de
+#   localizacao, nao recusa. So vale quando o ponto e a propria pessoa/casa/aqui.
+# - "nao posso ir amanha / de manha / nessa semana" e' conflito de horario, nao
+#   recusa do servico: continua com o follow-up (o LLM/atendimento remarca).
+_SEM_PONTO_DE_REFERENCIA = (
+    r"(?!\s+d[aeo]s?\s+(?!(?:mim|casa|minha|meu|aqui|onde|nos)\b)\w)"
+)
+_QUANDO_NAO_E_RECUSA = (
+    r"(?!\s+(?:hoje|amanha|segunda|terca|quarta|quinta|sexta|sabado|domingo|dia|"
+    r"nesse|nessa|neste|nesta|essa|esse|ate|no|na|as|de\s+manha|a\s+tarde|"
+    r"de\s+tarde|de\s+noite|a\s+noite|semana|mes|agora|sozinh[ao])\b)"
+)
+_OBJECAO_DISTANCIA = [
+    re.compile(rf"\b(?:muito|mt|mto|bem|tao|meio|demais)\s+longe\b{_SEM_PONTO_DE_REFERENCIA}"),
+    re.compile(r"\bmor(?:o|a|amos|ando)\s+(?:(?:muito|bem|meio)\s+)?longe\b"),
+    re.compile(
+        r"\b(?:e|eh|ta|esta|fica|ficou|ficando)\s+"
+        rf"(?:(?:muito|bem|meio|bastante|um\s+pouco)\s+)?longe\b{_SEM_PONTO_DE_REFERENCIA}"
+    ),
+    re.compile(r"\blonge\s+(?:demais|de\s+mais|pra\s+mim|para\s+mim|de\s+mim|de\s+casa|da\s+minha\s+casa|daqui)\b"),
+    re.compile(
+        r"\bnao\s+(?:da|tem\s+como|tenho\s+como|teria\s+como|consigo|posso|vou\s+conseguir)\s+"
+        rf"(?:(?:pra|para|de)\s+)?(?:ir|chegar|comparecer|vir|me\s+deslocar|deslocar)\b{_QUANDO_NAO_E_RECUSA}"
+    ),
+    re.compile(r"\bmor(?:o|amos|a)\s+(?:em\s+outr[ao]\s+(?:cidade|estado|pais)|fora\s+da\s+cidade|no\s+interior)\b"),
+    re.compile(r"\boutro\s+lado\s+da\s+cidade\b"),
+]
+_OBJECAO_CUSTO = [
+    re.compile(r"\b(?:muito|mt|mto|bem|meio|demais|bastante|tao)\s+(?:caro|carissimo|salgado|puxado)\b"),
+    re.compile(
+        r"\b(?:e|eh|ta|esta|fica|ficou|achei|acho|achamos|achou)\s+"
+        r"(?:(?:muito|mt|mto|bem|meio|bastante|um\s+pouco)\s+)?(?:caro|carissimo|salgado|puxado)\b"
+    ),
+    re.compile(r"\bcaro\s+(?:demais|de\s+mais|pra\s+mim|para\s+mim)\b"),
+    re.compile(r"\bnao\s+(?:tenho|tem|temos)\s+(?:como\s+pagar|condicoes|condicao|dinheiro|grana|verba)\b"),
+    re.compile(r"\bsem\s+condicoes\b"),
+    re.compile(r"\bnao\s+(?:posso|consigo|vou\s+conseguir)\s+pagar\b"),
+    re.compile(r"\bnao\s+cabe(?:m)?\s+no\s+(?:meu\s+)?(?:orcamento|bolso)\b"),
+    re.compile(r"\bfora\s+d[oa]\s+(?:meu|minha)\s+(?:orcamento|realidade|bolso|alcance)\b"),
+    re.compile(r"\bpesad[oa]\s+(?:pro|para\s+o|no)\s+bolso\b"),
+]
+_OBJECAO_TEMPO = [
+    re.compile(
+        r"\b(?:nao\s+tenho|nao\s+tem|nao\s+temos|to\s+sem|estou\s+sem|ando\s+sem|fico\s+sem|sem)\s+"
+        r"(?:muito\s+|nenhum\s+)?tempo\b"
+    ),
+    re.compile(r"\bnao\s+tenho\s+(?:muita\s+)?disponibilidade\b"),
+]
+_OBJECOES = [*_OBJECAO_DISTANCIA, *_OBJECAO_CUSTO, *_OBJECAO_TEMPO]
+# "Vix"/"Vixe" sozinho: a reacao de desanimo/surpresa da resposta do incidente.
+# So a mensagem inteira (nunca no meio de uma frase com conteudo).
+_OBJECAO_INTERJEICAO = re.compile(r"^(?:vix+|vixe+|vixi+|vish+)(?:\s+(?:maria|nossa|senhora|que\s+longe))?$")
+_PERGUNTA_DE_LOCALIZACAO = re.compile(
+    r"^(?:onde|aonde|qual|quais|quanto|quantos|como|quando)\b"
+    r"|\bonde\s+(?:fica|e|eh|ficam)\b|\bendereco\b|\bcomo\s+(?:eu\s+)?(?:chego|chegar)\b"
+)
+_TIRA_DUVIDA_FINAL = re.compile(r"\bn[eé]\s*[?？]*\s*$")
 
-    So frase de adiamento; "ok" ou "obrigada" sozinhos e perguntas continuam
-    como antes (quem pergunta nao esta adiando).
+
+def _e_pergunta(text: str, normalizado: str) -> bool:
+    if _PERGUNTA_DE_LOCALIZACAO.search(normalizado):
+        return True
+    if re.search(r"[?？]", text):
+        # "Muito longe, né?" afirma; so a interrogacao real faz pergunta.
+        return _TIRA_DUVIDA_FINAL.search(text.casefold().strip()) is None
+    return False
+
+
+def is_objection(text: str) -> bool:
+    """Objecao de distancia, custo ou tempo ("Muito longe", "tá caro", "não tenho tempo").
+
+    Nao e loss e nao e opt-out: e' o sinal de que o follow-up automatico nao deve
+    insistir nem comparar a pessoa com terceiros. Pergunta nunca conta.
+    """
+    if not text or not text.strip():
+        return False
+    normalizado = _normalize(text)
+    if not normalizado:
+        return False
+    if _OBJECAO_INTERJEICAO.match(normalizado):
+        return True
+    if _e_pergunta(text, normalizado):
+        return False
+    return any(pattern.search(normalizado) for pattern in _OBJECOES)
+
+
+# 03/nov/2026: "Ok obrigada" (despedida) tambem fechou a conversa mas o follow-up
+# disparou logo depois. Despedida = a mensagem INTEIRA e' agradecimento/tchau com,
+# no maximo, palavras de enfeite (ok, tá bom, muito, pela atenção...). Qualquer
+# palavra fora da lista (um pedido, uma duvida, "vou marcar") nao e' despedida --
+# nessa duvida o follow-up segue como antes. "ok" sozinho continua nao sendo
+# despedida: pode confirmar um horario que o agente propos.
+_DESPEDIDA_NUCLEO = re.compile(
+    r"\b(?:obrigad[ao]+s?|brigad[ao]+s?|obg|obgd[ao]?|vlw|valeu+|agradeco|grato|grata|"
+    r"tchau|xau|flw|falou|fechou|ate\s+(?:mais|logo|breve|a\s+proxima))\b"
+)
+_DESPEDIDA_ENFEITE = frozenset(
+    "ok okk okay oks certo certinho tudo bem ta tah bom boa blz beleza entao ai muito mt mto "
+    "mesmo viu de nada por pela pelo pelas pelos atencao ajuda informacao informacoes retorno "
+    "esclarecimento esclarecimentos gentileza disponibilidade tambem igualmente voces voce vc vcs "
+    "a o as os ate mais logo depois dia tarde noite amem deus abencoe abraco abracos bjs bj "
+    "beijos doutor doutora dr dra moca rapaz show top massa perfeito otimo".split()
+)
+
+
+def is_farewell(text: str) -> bool:
+    """Despedida/agradecimento final ("ok obrigada", "valeu", "tá bom, obrigado")."""
+    if not text or not text.strip() or re.search(r"[?？]", text):
+        return False
+    normalizado = _normalize(text)
+    if len(normalizado.split()) > 10 or not _DESPEDIDA_NUCLEO.search(normalizado):
+        return False
+    resto = _DESPEDIDA_NUCLEO.sub(" ", normalizado).split()
+    return all(token in _DESPEDIDA_ENFEITE for token in resto)
+
+
+def encerra_follow_up(text: str) -> bool:
+    """A fala fecha o ciclo de follow-up: adiamento, objecao ou despedida."""
+    return is_deferral_or_closing(text) or is_farewell(text)
+
+
+def is_deferral_or_closing(text: str) -> bool:
+    """O paciente adiou, recusou de leve ou encerrou por ora: o follow-up nao deve insistir.
+
+    Frase de adiamento ou objecao de distancia/custo/tempo (``is_objection``);
+    "ok" ou "obrigada" sozinhos e perguntas continuam como antes (quem pergunta
+    nao esta adiando). Despedida e' ``is_farewell`` (so a ultima fala, ver
+    ``encerra_follow_up``).
     """
     if not text or not text.strip():
         return False
@@ -318,7 +455,7 @@ def is_deferral_or_closing(text: str) -> bool:
         return False
     if re.search(r"\b(?:quanto|qual|quais|tem vaga|tem horario|quero marcar|como (?:faco|marco))\b", normalizado):
         return False
-    return bool(_ADIAMENTO.search(normalizado))
+    return bool(_ADIAMENTO.search(normalizado)) or is_objection(text)
 
 
 def is_trivial_no_reply(text: str) -> bool:

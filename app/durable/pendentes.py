@@ -41,6 +41,10 @@ PENDENTES_CRON = "*/30 * * * *"  # cinco campos, UTC: a cada 30 minutos
 MAX_POR_VARREDURA = 3
 JANELA_META_HORAS = 23
 ESPERA_MINIMA_SEGUNDOS = 180
+# Espera minima quando o gatilho e a devolucao da marcacao de equipe (tick do Manager):
+# o paciente ja esperou pelo menos a janela da marcacao (270 s); 60 s so evita abordar
+# quem acabou de escrever e ainda esta digitando.
+ESPERA_LIBERADOS_SEGUNDOS = 60
 SEM_ABORDAR_HORAS = 6
 PENDENTE_KIND = "triagem"
 
@@ -73,6 +77,8 @@ _CANDIDATOS_SQL = _sql_text(
       AND c.automation_state = 'open'
       AND c.status = 'open'
       AND u.received_at < now() - make_interval(secs => :espera_s)
+      -- 03/nov/2026: NULL = varredura geral; lista = so estes contatos (gatilho da devolucao)
+      AND (CAST(:phones AS text[]) IS NULL OR u.phone = ANY(CAST(:phones AS text[])))
       AND NOT EXISTS (
           SELECT 1 FROM genius_next.events AS o
           WHERE o.tenant_id = u.tenant_id AND o.phone = u.phone
@@ -121,7 +127,12 @@ def pendentes_tenants() -> list[str]:
     return sorted({t.strip() for t in raw.split(",") if t.strip()})
 
 
-def _leitura(tenants: list[str], limite: int) -> list[dict[str, Any]]:
+def _leitura(
+    tenants: list[str],
+    limite: int,
+    phones: list[str] | None = None,
+    espera_s: int = ESPERA_MINIMA_SEGUNDOS,
+) -> list[dict[str, Any]]:
     from app.durable.tenant_registry import get_registry_engine
 
     with Session(get_registry_engine(get_settings().DATABASE_URL)) as session:
@@ -131,7 +142,8 @@ def _leitura(tenants: list[str], limite: int) -> list[dict[str, Any]]:
                 {
                     "tenants": tenants,
                     "janela_h": JANELA_META_HORAS,
-                    "espera_s": ESPERA_MINIMA_SEGUNDOS,
+                    "espera_s": espera_s,
+                    "phones": phones,
                     "sem_abordar_h": SEM_ABORDAR_HORAS,
                     "limite": limite,
                 },
@@ -154,8 +166,13 @@ def _leitura(tenants: list[str], limite: int) -> list[dict[str, Any]]:
         return saida
 
 
-def listar_pendentes_step(tenants: list[str], limite: int) -> list[dict[str, Any]]:
-    return _leitura(tenants, limite)
+def listar_pendentes_step(
+    tenants: list[str],
+    limite: int,
+    phones: list[str] | None = None,
+    espera_s: int = ESPERA_MINIMA_SEGUNDOS,
+) -> list[dict[str, Any]]:
+    return _leitura(tenants, limite, phones, espera_s)
 
 
 def deve_abordar(candidato: dict[str, Any]) -> bool:
@@ -230,6 +247,43 @@ def processar_pendentes(candidatos: list[dict[str, Any]]) -> list[str]:
                 "pendentes: falha ao abordar contato ...%s", str(c.get("phone"))[-4:], exc_info=True
             )
     return criados
+
+
+def abordar_liberados(liberados: list[dict[str, Any]]) -> list[str]:
+    """Aborda agora quem acabou de ser devolvido ao bot com a ultima fala sem resposta.
+
+    03/nov/2026 (casos ...9240 e ...7368): a fala escrita DURANTE a marcacao de equipe e
+    descartada (``suppressed_by_control``); 270 s depois o tick devolve a conversa ao bot, mas
+    ninguem relia a fala -- ela so era achada pela varredura de 30 min (ate 26 min de espera).
+    Quem chama e o tick do Manager (60 s) com as linhas de ``release_stale_crew_in``. A regra de
+    quem abordar e a mesma da varredura (``_CANDIDATOS_SQL`` + ``deve_abordar``), so restrita aos
+    contatos devolvidos e com espera minima menor; so tenants de ``MANAGER_PENDENTES_TENANTS``.
+    A varredura de 30 min segue como rede de seguranca e o item de triagem recem-criado a impede
+    de abordar de novo.
+    """
+    if not liberados:
+        return []
+    tenants = set(pendentes_tenants())
+    pares = {
+        (str(r.get("tenant_id")), str(r.get("phone")))
+        for r in liberados
+        if isinstance(r, dict)
+        and r.get("automation_state") == "open"
+        and str(r.get("tenant_id")) in tenants
+    }
+    if not pares:
+        return []
+    candidatos = [
+        c
+        for c in listar_pendentes_step(
+            sorted({t for t, _ in pares}),
+            MAX_POR_VARREDURA,
+            phones=sorted({p for _, p in pares}),
+            espera_s=ESPERA_LIBERADOS_SEGUNDOS,
+        )
+        if (str(c["tenant_id"]), str(c["phone"])) in pares
+    ]
+    return processar_pendentes(candidatos) if candidatos else []
 
 
 @jobs.periodic(cron=PENDENTES_CRON)

@@ -344,6 +344,7 @@ def draft_reply_with_agent(
         except Exception:
             logger.warning("client profile indisponivel", exc_info=True)
             perfil = None
+        from app.context.campaigns import campanhas_vigentes
         from app.context.knowledge import list_catalog, load_full_catalog
         from app.durable.tenant_registry import (
             knowledge_strategy_with_session,
@@ -351,6 +352,8 @@ def draft_reply_with_agent(
         )
 
         catalogo = tuple(list_catalog(session, tenant_id=turn.tenant_id))
+        # Campanha nao e catalogo: so entra se vigente hoje (nunca levanta).
+        campanhas = campanhas_vigentes(session, turn.tenant_id)
         estrategia = knowledge_strategy_with_session(
             session, tenant_id=turn.tenant_id
         )
@@ -384,6 +387,10 @@ def draft_reply_with_agent(
     )
     if context is None:
         raise RuntimeError("turno sem conteudo para redigir")
+    # Antes de _fontes_de_valor: o preco da campanha e fonte legitima de valor.
+    from app.context.campaigns import incluir_no_contexto
+
+    incluir_no_contexto(context, campanhas)
     if summary is not None:
         context.setdefault("client", {})["summary"] = summary
 

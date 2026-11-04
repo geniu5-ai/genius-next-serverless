@@ -159,3 +159,23 @@ que a corrige. As do Next que também valem aqui estão citadas pelo número del
 
 **Regra:** timeout de conexão é por endereço, não total. Em ferramenta que roda a cada comando, meça a latência de ponta a ponta e ponha prazo total e cache na decisão que não muda.
 
+### 18. Prompt e catálogo corrigidos no Next não chegam ao Standby; promover com dump velho desfaz a correção
+**Data:** 03/nov/2026 | **Impacto:** nenhum ainda (o Standby está em `record_only` e só tem um tenant de teste).
+
+**Causa:** prompts (`tenant_prompt_profiles`), catálogo (`knowledge`) e ambiente são **dados**, não código. O Standby só os recebe restaurando um dump do Next (backup diário no R2), e o env dele é próprio. Em 03/nov o Next corrigiu prompt e catálogo de um tenant (campanha vencida cotada ao paciente, regra de escassez); um dump anterior a essas mudanças as traria de volta.
+
+**Regra:** (1) **todo código do Next é espelhado aqui na mesma entrega** (ordem do chairman, 03/nov): o mesmo patch vale nos dois enquanto os arquivos forem idênticos (ver `OPERACAO.md`, "Paridade com o Next"); (2) antes de promover, usar um dump **posterior** à última mudança de prompt ou catálogo do Next e conferir as versões ativas em `tenant_prompt_profiles` e as campanhas em `knowledge`; (3) o histórico dessas mudanças está em `Genius-Next/docs/TRAPS.md` #85 a #97 (repositório privado); este repositório é público e não copia prompt, preço nem conversa (`TRAPS` #20).
+
+### 19. O env do Next não serve no Standby: `OPENAI_BASE_URL` aponta para um roteador local da VPS 002
+**Data:** 03/nov/2026 | **Impacto:** nenhum ainda. Teria derrubado todo turno do Standby (conexão recusada).
+
+**Causa:** em 03/nov o agente de resposta do Next passou a chamar um roteador de LLM na própria 002 (`OPENAI_BASE_URL=http://127.0.0.1:8090/v1`, `OPENAI_API_KEY` = token do roteador, `REPLY_AGENT_MODEL=openai-chat:gpt-4o-mini`). Esse roteador escuta só em `127.0.0.1` e não existe no Render. O Standby fala com o Omni `gpt-pool` pelo OmniRoute.
+
+**Regra:** ao copiar variáveis do Next para o Render, **não copiar** `OPENAI_BASE_URL`, `OPENAI_API_KEY` nem `REPLY_AGENT_MODEL`; manter o par do Omni. O mesmo vale para qualquer variável que aponte para `127.0.0.1` ou para IP da tailnet. Detalhe do roteador: `Genius-Next/docs/runbooks/RUNBOOK-ROUTER-OPENAI-FREE.md`.
+
+### 20. Este repositório é público: nada de dado de cliente nele
+**Data:** 03/nov/2026 | **Impacto:** nenhum (prevenção).
+
+**Causa:** `geniu5-ai/standby` é público, e a regra "tudo o que muda no Next muda aqui" empurra para copiar documentos que citam preço, prompt e conversa de um cliente real (clínica).
+
+**Regra:** espelhar aqui **código, testes que não leem dado real, regras e armadilhas genéricas**. Não copiar: prompts e catálogos de tenant, preços, conversas e telefones de pacientes, nem o harness que lê o banco de produção (`tests/promptfoo/kyrios` do Next). Esses ficam no `Genius-Next` (privado), e o que o Standby precisa saber de cada mudança entra como nota genérica (como as #18 e #19). Varrer o diff atrás de segredo e dado de cliente antes de abrir PR (`TRAPS` #14).

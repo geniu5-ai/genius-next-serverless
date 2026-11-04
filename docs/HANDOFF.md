@@ -7,12 +7,19 @@ bloco de estado mais novo divergir de um texto mais antigo, vale o bloco.
 | Documento | Para quê |
 |---|---|
 | [`../README.md`](../README.md) | porta de entrada e atalhos |
+| [`INDEX.md`](INDEX.md) | índice de toda a documentação (canônico × histórico) |
+| [`PARIDADE.md`](PARIDADE.md) | o que é igual e o que é separado entre Next e Standby, e a checagem por hash de `app/` |
 | [`../AGENTS.md`](../AGENTS.md) | regras para qualquer agente aqui (CEO técnico, **autonomia total** com três travas). `../CLAUDE.md` é cópia gerada dele (`scripts/sync_agents.py`) |
 | [`OPERACAO.md`](OPERACAO.md) | onde está, variáveis, segredos, cofre, roles, como testar, pendências |
 | [`WAKE.md`](WAKE.md) | por que o worker dorme no Render free e como o Actions o acorda |
 | [`COFRE-IDEIAS.md`](COFRE-IDEIAS.md) | as seis ideias do cofre (todas feitas), decisões e alternativas avaliadas |
 | [`TRAPS.md`](TRAPS.md) | armadilhas já encontradas (sintoma, causa, correção, regra) |
 | [`GENIUS-DEV-AGENTS.md`](GENIUS-DEV-AGENTS.md) | cópia das regras da casa do Genius Dev (fonte: VPS 003) |
+
+> **🧭 Paridade com o Next (03/nov/2026, tarde):** o canônico agora é [`PARIDADE.md`](PARIDADE.md) (regra, matriz igual × separado, medição por hash, registro de espelhamentos). Em resumo:
+> - **Regra (ordem do chairman):** tudo o que muda no Next é espelhado aqui na mesma entrega (`AGENTS.md`). Repositório público: só código, testes sem dado real, regras e armadilhas genéricas (`TRAPS` #20). O Standby só existe no container local e no GitHub, nunca numa VPS.
+> - **Código:** 106 dos 119 arquivos de `app/` do Next são idênticos aos daqui; quatro diferem (`app/main.py`, `app/observability.py`, `app/status/audit.py`, `app/webapp/router.py`) e ainda não foram analisados. O patch do follow-up e o do Manager já estão espelhados neste PR; merge junto com o PR do Next (`Genius-Next#74`).
+> - **Dados e ambiente não vêm do código:** prompt e catálogo chegam por sincronização do banco (a construir) ou dump posterior (`TRAPS` #18); o env do Next não serve aqui (`TRAPS` #19).
 
 > **🧭 Estado em 03/nov/2026 (leia primeiro):**
 > - **No ar:** serviço `standby` no Render (plano free, dorme após ~15 min), banco no Neon (projeto `Next`, `aws-sa-east-1`). `record_only`: nada vai ao WhatsApp. URL `https://genius-next-serverless.onrender.com` (o subdomínio não muda, `TRAPS` #12).
