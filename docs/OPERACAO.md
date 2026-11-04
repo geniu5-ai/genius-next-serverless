@@ -308,7 +308,7 @@ banco (a construir) ou dump posterior (`TRAPS` #18), e o env do Next não vale a
    o cofre novo.
 9. Criar o ambiente da sessão com `STANDBY_VAULT_URL` e `STANDBY_VAULT_KEY` (os dois valores estão em
    `vault-env.local`, arquivo local ignorado pelo git; copiar e só então apagar) e testar `python scripts/vault.py list` numa sessão nova.
-10. **`CPFHUB_API_KEY` fixa no código** (`app/tools/procuracao.py`, como valor padrão de `os.getenv`),
+10. ~~**`CPFHUB_API_KEY` fixa no código**~~ **(valor padrão removido em 04/nov, `TRAPS` #21; falta rotacionar a chave no CPFHub)** — (`app/tools/procuracao.py`, como valor padrão de `os.getenv`),
     vinda da cópia do Next: está no histórico do Standby e vai em todo clone e backup. Rotacionar a
     chave no CPFHub, trocar o padrão por vazio e definir `CPFHUB_API_KEY` no Render se a ferramenta
     for usada (`TRAPS` #14). Conferir o mesmo no repositório do Next.

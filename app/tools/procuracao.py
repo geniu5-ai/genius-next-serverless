@@ -10,7 +10,9 @@ import httpx
 
 DOCUSEAL_CLOUD_API_KEY = os.getenv("DOCUSEAL_CLOUD_API_KEY", "")
 DOCUSEAL_CLOUD_URL = "https://api.docuseal.com"
-CPFHUB_API_KEY = os.getenv("CPFHUB_API_KEY", "f865273340b50cd448e0ae2a80c750ba0a26f9131fd5b1e8b41436bf02906909")
+# A chave vem SEMPRE do ambiente (nunca no código: o repositório do Standby é público e o histórico guarda para sempre).
+# Sem a variável, a consulta de CPF falha com 401 em vez de usar um valor padrão.
+CPFHUB_API_KEY = os.getenv("CPFHUB_API_KEY", "")
 
 DR_NOME   = os.getenv("DR_NOME",   "Dr. Cláudio Lopes")
 DR_OAB    = os.getenv("DR_OAB",    "OAB/CE 12345")

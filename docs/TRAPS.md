@@ -179,3 +179,12 @@ que a corrige. As do Next que também valem aqui estão citadas pelo número del
 **Causa:** `geniu5-ai/standby` é público, e a regra "tudo o que muda no Next muda aqui" empurra para copiar documentos que citam preço, prompt e conversa de um cliente real (clínica).
 
 **Regra:** espelhar aqui **código, testes que não leem dado real, regras e armadilhas genéricas**. Não copiar: prompts e catálogos de tenant, preços, conversas e telefones de pacientes, nem o harness que lê o banco de produção (`tests/promptfoo/kyrios` do Next). Esses ficam no `Genius-Next` (privado), e o que o Standby precisa saber de cada mudança entra como nota genérica (como as #18 e #19). Varrer o diff atrás de segredo e dado de cliente antes de abrir PR (`TRAPS` #14).
+
+### 21. Chave do CPFHub estava fixa no código deste repositório público
+**Data:** 04/nov/2026 | **Impacto:** o valor padrão de `os.getenv("CPFHUB_API_KEY", ...)` em `app/tools/procuracao.py` veio da cópia do Next e ficou no histórico do Standby, que é público: vai em todo clone e backup (era a pendência 10 da seção "Pendente" de `docs/OPERACAO.md`).
+
+**Correção:** valor padrão removido (`os.getenv("CPFHUB_API_KEY", "")`), igual ao Next (`Genius-Next` `TRAPS` #101). Sem a variável no Render, a consulta de CPF falha com 401; o Standby não atende hoje o tenant que a usa.
+
+**Falta (chairman):** rotacionar a chave no painel do CPFHub; tirar do código não apaga o histórico.
+
+**Regra:** chave de API nunca é valor padrão de `os.getenv`. Varredura: `git grep -nE 'getenv\([^)]*, *"[A-Za-z0-9_-]{16,}"'`.
